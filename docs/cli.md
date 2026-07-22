@@ -118,3 +118,38 @@ rondine suggest --profile chat --json > chat.json
 
 The detected hardware and installed engines can change the ranking, so rank
 `#1` is not guaranteed to identify the same model on another machine.
+
+## Plan, pull, and serve memory modes
+
+`plan`, `pull`, and `serve` share two related options:
+
+`--memory-mode auto|resident|hybrid|mmap`
+
+- `auto` (default): prefer a resident fit; on discrete CUDA GGUFs, fall back to a
+  supported hybrid RAM+VRAM plan when VRAM alone is insufficient.
+- `resident`: require the estimate to fit the primary budget (VRAM or unified RAM).
+- `hybrid`: require llama.cpp GGUF on a discrete CUDA host and estimate against
+  combined RAM + VRAM. Emits `--cpu-moe` for MoE models plus auto-fit GPU layers.
+- `mmap`: experimental SSD demand paging. Never chosen by `auto`.
+
+`--allow-oversize`
+
+Required acknowledgment for `--memory-mode mmap`. Experimental plans stay marked
+`fits=false` and `experimental=true`; presets show an `[EXPERIMENTAL]` marker and
+`serve` reprints the warning at launch.
+
+```bash
+# Supported hybrid MoE offload on a GPU workstation
+rondine plan glm-5.2 --memory-mode hybrid --context 4096 --save-as glm-hybrid
+
+# Explicit experimental SSD paging (not selected automatically)
+rondine plan glm-5.2 --quant UD-IQ1_S --context 4096 \
+  --memory-mode mmap --allow-oversize --save-as glm-ssd
+rondine pull glm-5.2 --memory-mode mmap --allow-oversize
+rondine serve --preset glm-ssd
+```
+
+`pull` refuses a download when free disk is below the estimated shard total.
+`mmap` is OS page-cache demand paging, not the unmerged llama.cpp `--moe-stream*`
+expert streamer. See [engine tuning](engine-tuning.md) for capacity notes and
+Apple Silicon Metal/mmap hazards.

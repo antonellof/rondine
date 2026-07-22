@@ -69,10 +69,27 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 | Mac 24–48GB | `qwen3.6-27b` or `gemma-4-12b` |
 | Mac 48GB+ / Spark | `qwen3.6-35b-a3b` |
 | Mac 128GB+ | `deepseek-v4-flash` (opt-in) |
-| Mac 256GB / dual-node | `glm-5.2` (opt-in, low context) |
+| Mac 256GB | `glm-5.2` resident (opt-in, keep context practical) |
+| Discrete GPU + large RAM | `glm-5.2 --memory-mode hybrid` (opt-in) |
+| Dual-node / cluster | `glm-5.2` (opt-in; see cluster docs) |
+
+For oversized MoE models on CUDA workstations:
+
+```bash
+rondine plan glm-5.2 --memory-mode hybrid --context 4096 --save-as glm-hybrid
+rondine serve --preset glm-hybrid
+```
+
+Experimental SSD paging requires an explicit acknowledgment and is not a
+supported interactive setup on undersized machines:
+
+```bash
+rondine plan glm-5.2 --quant UD-IQ1_S --memory-mode mmap --allow-oversize \
+  --context 4096 --save-as glm-ssd
+```
 
 Rondine does **not** ship a proprietary coding agent loop. Use Cursor, Continue, Aider,
-Codex CLI, Claude Code (custom base URL), or similar against the local server.
+Codex CLI, Claude Code (custom base URL), Pi, or similar against the local server.
 
 ## Verify
 

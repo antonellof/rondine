@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Memory strategies: `resident`, supported CUDA `hybrid` (RAM+VRAM / `--cpu-moe`), and explicit experimental `mmap` SSD paging (`--memory-mode`, `--allow-oversize`)
+- Disk free-space detection in `doctor` and a pre-download guard for sharded GGUFs
+- Expanded GLM-5.2 Unsloth quant ladder with verified Hub sizes (`UD-IQ1_S` … `UD-Q4_K_M`)
+- llama.cpp serve flags for fit helpers, mmap/mlock policy, MoE CPU offload, and tensor split
+- Docs and blog updates for hybrid / oversized MoE workflows
+
 ## 0.1.0
 
 - Initial Rondine control-plane CLI (Python 3.11+)

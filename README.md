@@ -122,7 +122,7 @@ On a 32GB M2 Pro, Qwen2.5-Coder 3B Q4_K_M ran fully on Metal at a median
 
 ## Documentation
 
-- [CLI guide and `suggest` options](docs/cli.md)
+- [CLI guide and `suggest` / memory-mode options](docs/cli.md)
 - [Coding-client setup](docs/coding.md)
 - [Engine tuning](docs/engine-tuning.md)
 - [Hardware gates](docs/hardware-gates.md)
