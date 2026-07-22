@@ -75,6 +75,46 @@ def _print_engine_args(args: dict[str, Any], indent: str = "  ") -> None:
         click.echo(f"{indent}  {key}: {value}")
 
 
+def _print_hybrid_unavailable_guidance(hw: Any) -> None:
+    """Explain why CPU/GPU hybrid mode is unavailable on this host."""
+    click.echo()
+    click.echo("why hybrid mode is unavailable:")
+    click.echo(
+        "  A discrete CUDA host is a computer with a separate NVIDIA GPU "
+        "and CUDA support."
+    )
+    click.echo(
+        "  Hybrid mode splits llama.cpp GGUF weights between NVIDIA GPU VRAM "
+        "and system RAM."
+    )
+    if hw.is_apple_silicon:
+        click.echo(
+            "  This Apple Silicon Mac uses unified memory and does not provide CUDA, "
+            "so that split does not apply."
+        )
+    elif hw.is_spark:
+        click.echo(
+            "  This DGX Spark uses unified CPU/GPU memory rather than the supported "
+            "discrete-VRAM split."
+        )
+    else:
+        click.echo("  This host has no supported discrete CUDA GPU.")
+    click.echo()
+    click.echo("what to try instead:")
+    click.echo("  - Find a fitting model: rondine suggest --profile coding")
+    click.echo(
+        f"  - Use resident mode for a model that fits in this host's {hw.ram_gb:g} GB RAM."
+    )
+    click.echo(
+        "  - For a llama.cpp GGUF only, --memory-mode mmap --allow-oversize can "
+        "page from SSD,"
+    )
+    click.echo(
+        "    but it requires enough free disk and may be unusably slow for a model "
+        "far larger than RAM."
+    )
+
+
 def _selected_payload(result: Any) -> dict[str, Any] | None:
     if result.selected is None:
         return None
@@ -756,6 +796,8 @@ def plan(
         rejected = [c for c in result.candidates if c.rejected][:8]
         for c in rejected:
             click.echo(f"  rejected {c.model_id} {c.engine}/{c.quant}: {c.reject_reason}")
+        if memory_mode == "hybrid" and not hw.is_discrete_cuda:
+            _print_hybrid_unavailable_guidance(hw)
         sys.exit(1)
     sel = result.selected
     provider = (sel.variant or {}).get("provider") or ""

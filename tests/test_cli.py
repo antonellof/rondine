@@ -136,6 +136,33 @@ def test_cli_plan_mmap_requires_acknowledgement(tmp_path, monkeypatch) -> None: 
     assert selected["memory_mode"] == "mmap"
 
 
+def test_cli_plan_explains_hybrid_cuda_requirement(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "rondine.cli.detect_hardware",
+        lambda: HardwareInfo(
+            platform="darwin",
+            arch="arm64",
+            hostname="test",
+            ram_gb=32.0,
+            is_apple_silicon=True,
+            metal_available=True,
+            disk_free_gb=300.0,
+        ),
+    )
+
+    result = CliRunner().invoke(
+        main,
+        ["plan", "glm-5.2", "--memory-mode", "hybrid", "--context", "4096"],
+    )
+
+    assert result.exit_code != 0
+    assert "A discrete CUDA host is a computer with a separate NVIDIA GPU" in result.output
+    assert "Apple Silicon Mac uses unified memory" in result.output
+    assert "rondine suggest --profile coding" in result.output
+    assert "--memory-mode mmap --allow-oversize" in result.output
+
+
 def test_cli_suggest(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
     runner = CliRunner()

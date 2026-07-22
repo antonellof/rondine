@@ -47,7 +47,7 @@ chat-oriented sampling/concurrency. See the [CLI guide](docs/cli.md#suggest) for
 every `suggest` option, including `--limit`, `--opt-in`, `--json`,
 `--configure`, and `--save-as`.
 
-![Rondine doctor and suggest terminal demo](assets/rondine-demo.gif)
+Rondine doctor and suggest terminal demo
 
 ### Small-model smoke test
 
@@ -93,11 +93,20 @@ SSD-backed `mmap` is a separate, experimental escape hatch. It demand-pages
 GGUF weights and is not true expert streaming:
 
 ```bash
+# Planning is safe: it does not download or launch the model.
 rondine plan glm-5.2 --quant UD-IQ1_S --context 4096 \
   --memory-mode mmap --allow-oversize --save-as glm-ssd
+
+# Review the experimental plan before downloading hundreds of gigabytes.
+rondine preset show glm-ssd
 rondine pull
 rondine serve --preset glm-ssd
 ```
+
+`--allow-oversize` is an explicit safety acknowledgement: it permits Rondine to
+create an `mmap` plan even though the model does not fit resident memory. It does
+not make the model fit, bypass the free-disk check, or enable this mode in
+automatic recommendations. Rondine accepts it only with `--memory-mode mmap`.
 
 GLM-5.2 `UD-IQ1_S` needs about 223GB resident memory for practical use and at
 least 230GB free disk. A 32GB Mac may map it, but page thrashing is expected to
@@ -114,6 +123,8 @@ rondine preset list
 rondine preset serve coding --dry-run  # inspect without starting
 ```
 
+
+
 ## Performance
 
 On a 32GB M2 Pro, Qwen2.5-Coder 3B Q4_K_M ran fully on Metal at a median
@@ -122,12 +133,14 @@ On a 32GB M2 Pro, Qwen2.5-Coder 3B Q4_K_M ran fully on Metal at a median
 
 ## Documentation
 
-- [CLI guide and `suggest` / memory-mode options](docs/cli.md)
+- [CLI guide and](docs/cli.md) `suggest` [/ memory-mode options](docs/cli.md)
 - [Coding-client setup](docs/coding.md)
 - [Engine tuning](docs/engine-tuning.md)
 - [Hardware gates](docs/hardware-gates.md)
 - [Cluster setup](docs/cluster.md)
 - [Benchmarks](docs/benchmarks.md)
+
+
 
 ## License
 
@@ -135,8 +148,5 @@ Apache-2.0. Model weights retain their upstream licenses.
 
 ---
 
-<p align="center">
-  <img src="assets/rondine-swallow.png" alt="A swallow" width="220">
-  <br>
-  <em>Rondine means “swallow” in Italian.</em>
-</p>
+
+*Rondine means “swallow” in Italian.*
