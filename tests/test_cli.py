@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from click.testing import CliRunner
 
-from rondine.cli import _format_logo, main
+from rondine.catalog import load_catalog
+from rondine.cli import _apply_hub_hardware_budget, _format_logo, main
+from rondine.detect import HardwareInfo
 
 
 def test_format_logo_centers_artwork(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -33,6 +35,39 @@ def test_cli_plan_json(tmp_path, monkeypatch) -> None:  # type: ignore[no-untype
     result = runner.invoke(main, ["plan", "qwen3.6-27b", "--profile", "coding", "--json"])
     # May fail to fit on tiny CI VMs — accept either success with selected or exit 1
     assert "qwen3.6-27b" in result.output or result.exit_code in {0, 1}
+
+
+def test_hub_plan_uses_discrete_gpu_vram() -> None:
+    selected = {
+        "estimate": {
+            "weight_gb": 22.0,
+            "activation_gb": 2.64,
+            "kv_gb": 0.0,
+            "os_reserve_gb": 8.0,
+            "total_gb": 32.64,
+            "available_gb": 0.0,
+            "headroom_gb": 0.0,
+            "fits": True,
+        }
+    }
+    hw = HardwareInfo(
+        platform="linux",
+        arch="x86_64",
+        hostname="vast",
+        ram_gb=204.0,
+        cuda_available=True,
+        cuda_capability=(8, 6),
+        gpu_name="RTX 3090",
+        vram_gb=24.0,
+        gpu_count=1,
+    )
+
+    total, unit = _apply_hub_hardware_budget(selected, load_catalog(), hw)
+
+    assert unit == "VRAM"
+    assert selected["estimate"]["available_gb"] == 24.0
+    assert selected["estimate"]["total_gb"] == total
+    assert not selected["estimate"]["fits"]
 
 
 def test_cli_suggest(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

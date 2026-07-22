@@ -21,7 +21,7 @@ from rondine.engines.mlx import MlxAdapter
 from rondine.engines.vllm import VllmAdapter
 from rondine.hub import curated_repo_ids, inspect_repo, search_hub
 from rondine.paths import brand_logo, plans_dir
-from rondine.planner import load_plan, plan_model, save_plan
+from rondine.planner import available_memory_gb, load_plan, plan_model, save_plan
 from rondine.presets import (
     delete_preset,
     list_presets,
@@ -105,6 +105,29 @@ def _save_hub_plan(selected: dict[str, Any], profile: str) -> Path:
     return path
 
 
+def _apply_hub_hardware_budget(
+    selected: dict[str, Any], catalog: Any, hw: Any
+) -> tuple[float, str]:
+    """Recalculate a Hub plan against VRAM on discrete CUDA hosts."""
+    available_gb, reserve_gb = available_memory_gb(catalog, hw)
+    estimate = selected["estimate"]
+    weight_gb = float(estimate["weight_gb"])
+    activation_gb = float(estimate["activation_gb"])
+    kv_gb = float(estimate.get("kv_gb") or 0.0)
+    total_gb = round(weight_gb + activation_gb + kv_gb + reserve_gb, 2)
+    estimate.update(
+        {
+            "os_reserve_gb": round(reserve_gb, 2),
+            "total_gb": total_gb,
+            "available_gb": available_gb,
+            "headroom_gb": round(available_gb - total_gb, 2),
+            "fits": available_gb >= total_gb,
+        }
+    )
+    unit = "VRAM" if hw.is_discrete_cuda else "RAM"
+    return total_gb, unit
+
+
 def _plan_from_hub(
     repo: str,
     *,
@@ -136,13 +159,11 @@ def _plan_from_hub(
     ctx = int(context or settings.get("context", 32768))
     sampling = {k: v for k, v in settings.items() if k not in {"context", "description"}}
     selected = inspected.to_plan_selected(profile=profile, context=ctx, sampling=sampling)
-    total = float(selected["estimate"]["total_gb"])
-    selected["estimate"]["available_gb"] = hw.ram_gb
-    selected["estimate"]["headroom_gb"] = round(hw.ram_gb - total, 2)
-    selected["estimate"]["fits"] = hw.ram_gb >= total
+    total, unit = _apply_hub_hardware_budget(selected, catalog, hw)
     if not selected["estimate"]["fits"]:
         click.echo(
-            f"warning: Hub model needs ~{total:.0f}GB, machine has {hw.ram_gb:.0f}GB",
+            f"warning: Hub model needs ~{total:.0f}GB {unit}, "
+            f"machine has {selected['estimate']['available_gb']:.0f}GB",
             err=True,
         )
     _save_hub_plan(selected, profile)
@@ -230,7 +251,7 @@ def _maybe_save_preset(
 @click.group()
 @click.version_option(__version__, prog_name="rondine")
 def main() -> None:
-    """Hardware-aware local LLM launcher with optimized configs for Mac, NVIDIA GPUs, and DGX Spark."""
+    """Hardware-aware local LLM launcher for Mac, NVIDIA GPUs, and DGX Spark."""
 
 
 @main.command()
