@@ -67,6 +67,10 @@ rondine serve qwen3.6-27b --profile coding --dry-run
 rondine preset serve coding --dry-run
 ```
 
+ASCII demo:
+
+![rondine doctor + suggest](assets/rondine-demo.gif)
+
 ## How suggestion works
 
 1. **Detect** RAM / VRAM / Apple Silicon / Spark / CUDA and which engines are installed.

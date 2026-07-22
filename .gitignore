@@ -10,3 +10,5 @@ build/
 .rondine/
 *.gguf
 .DS_Store
+scripts/
+*.cast
