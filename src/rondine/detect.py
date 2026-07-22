@@ -33,12 +33,22 @@ class HardwareInfo:
     cuda_available: bool = False
     cuda_capability: tuple[int, int] | None = None
     gpu_name: str = ""
+    vram_gb: float = 0.0
+    gpu_count: int = 0
     metal_available: bool = False
     engines: list[EngineStatus] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
     @property
+    def is_discrete_cuda(self) -> bool:
+        """True for consumer/workstation NVIDIA GPUs (not Apple Silicon / Spark unified)."""
+        return bool(self.cuda_available and self.vram_gb > 0 and not self.is_spark and not self.is_apple_silicon)
+
+    @property
     def usable_ram_gb(self) -> float:
+        """Memory budget for weight+KV fit estimates."""
+        if self.is_discrete_cuda:
+            return self.vram_gb
         return self.ram_gb
 
 
@@ -75,7 +85,7 @@ def _ram_gb() -> float:
             return mem_kb / (1024**2)
         except OSError:
             return 0.0
-    # Fallback
+    # Windows / fallback
     try:
         import psutil  # type: ignore
 
@@ -99,29 +109,60 @@ def _cpu_brand() -> str:
     return platform.processor() or ""
 
 
-def _detect_cuda() -> tuple[bool, tuple[int, int] | None, str]:
+@dataclass
+class CudaProbe:
+    available: bool = False
+    capability: tuple[int, int] | None = None
+    gpu_name: str = ""
+    vram_gb: float = 0.0
+    gpu_count: int = 0
+
+
+def _detect_cuda() -> CudaProbe:
     if which("nvidia-smi") is None:
-        return False, None, ""
+        return CudaProbe()
     out = _run(
         [
             "nvidia-smi",
-            "--query-gpu=name,compute_cap",
-            "--format=csv,noheader",
+            "--query-gpu=name,compute_cap,memory.total",
+            "--format=csv,noheader,nounits",
         ]
     )
     if not out.strip():
-        return True, None, ""
-    first = out.strip().splitlines()[0]
-    parts = [p.strip() for p in first.split(",")]
-    name = parts[0] if parts else ""
+        return CudaProbe(available=True)
+
+    lines = [ln.strip() for ln in out.strip().splitlines() if ln.strip()]
+    names: list[str] = []
+    vrams: list[float] = []
     cap: tuple[int, int] | None = None
-    if len(parts) > 1 and "." in parts[1]:
-        try:
-            major, minor = parts[1].split(".", 1)
-            cap = (int(major), int(minor))
-        except ValueError:
-            cap = None
-    return True, cap, name
+    for line in lines:
+        parts = [p.strip() for p in line.split(",")]
+        if not parts:
+            continue
+        names.append(parts[0])
+        if len(parts) > 1 and "." in parts[1]:
+            try:
+                major_s, minor_s = parts[1].split(".", 1)
+                parsed = (int(major_s), int(minor_s))
+                if cap is None or parsed > cap:
+                    cap = parsed
+            except ValueError:
+                pass
+        if len(parts) > 2:
+            try:
+                # memory.total with nounits is MiB
+                vrams.append(float(parts[2]) / 1024.0)
+            except ValueError:
+                pass
+
+    primary_vram = vrams[0] if vrams else 0.0
+    return CudaProbe(
+        available=True,
+        capability=cap,
+        gpu_name=names[0] if names else "",
+        vram_gb=round(primary_vram, 1),
+        gpu_count=len(names) or 1,
+    )
 
 
 def _looks_like_spark(gpu_name: str, arch: str, ram_gb: float) -> bool:
@@ -139,9 +180,10 @@ def _engine_llama() -> EngineStatus:
     path = which("llama-server") or which("llama-cli")
     if not path:
         brew = which("brew")
-        detail = "not found (brew install llama.cpp or rondine setup)"
+        detail = "not found (rondine setup"
         if brew:
-            detail += f"; brew={brew}"
+            detail += " or brew install llama.cpp"
+        detail += ")"
         return EngineStatus("llama.cpp", False, detail=detail)
     ver_out = _run([path, "--version"]) or _run([path, "-h"])
     version = None
@@ -168,7 +210,6 @@ def _engine_mlx() -> EngineStatus:
 
 def _engine_vllm() -> EngineStatus:
     if which("docker"):
-        # Presence of docker does not mean image is pulled; mark as installable.
         detail = "docker available"
     else:
         detail = "docker not found"
@@ -191,6 +232,8 @@ def detect_hardware() -> HardwareInfo:
         plat = "darwin"
     elif system == "linux":
         plat = "linux"
+    elif system in {"windows", "win32"}:
+        plat = "windows"
     else:
         plat = system
 
@@ -205,10 +248,10 @@ def detect_hardware() -> HardwareInfo:
         arch_norm = arch
 
     ram = _ram_gb()
-    cuda_ok, cap, gpu = _detect_cuda()
+    cuda = _detect_cuda()
     apple = plat == "darwin" and arch_norm == "arm64"
-    spark = _looks_like_spark(gpu, arch_norm, ram)
-    if cap and cap[0] == 12 and plat == "linux" and arch_norm == "aarch64":
+    spark = _looks_like_spark(cuda.gpu_name, arch_norm, ram)
+    if cuda.capability and cuda.capability[0] == 12 and plat == "linux" and arch_norm == "aarch64":
         spark = True
 
     info = HardwareInfo(
@@ -219,9 +262,11 @@ def detect_hardware() -> HardwareInfo:
         cpu_brand=_cpu_brand(),
         is_apple_silicon=apple,
         is_spark=spark,
-        cuda_available=cuda_ok,
-        cuda_capability=cap,
-        gpu_name=gpu,
+        cuda_available=cuda.available,
+        cuda_capability=cuda.capability,
+        gpu_name=cuda.gpu_name,
+        vram_gb=cuda.vram_gb if not spark else round(ram, 1),
+        gpu_count=cuda.gpu_count,
         metal_available=apple,
         engines=[_engine_llama(), _engine_mlx(), _engine_vllm()],
     )
@@ -229,6 +274,13 @@ def detect_hardware() -> HardwareInfo:
         info.warnings.append(
             "llama-server not on PATH; run `rondine setup` or `brew install llama.cpp`"
         )
-    if spark and not cuda_ok:
+    if spark and not cuda.available:
         info.warnings.append("DGX Spark detected heuristically but nvidia-smi missing")
+    if info.is_discrete_cuda and info.gpu_count > 1:
+        info.warnings.append(
+            f"{info.gpu_count} GPUs detected; planner sizes for GPU0 "
+            f"({info.vram_gb}GB). Multi-GPU tensor parallel is opt-in via engine_args."
+        )
+    if cuda.available and not spark and not apple and info.vram_gb <= 0:
+        info.warnings.append("nvidia-smi present but VRAM not reported; fit estimates may be wrong")
     return info

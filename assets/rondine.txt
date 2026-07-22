@@ -11,4 +11,4 @@
      /    .'    r o n d i n e   `.    \
     |   .'                       `.   |
      \_/                           \_/
-          forked wings · sparse MoE
+          tiny bird · suspiciously large models

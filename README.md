@@ -12,7 +12,7 @@
      /    .'    r o n d i n e   `.    \
     |   .'                       `.   |
      \_/                           \_/
-          forked wings · sparse MoE
+          tiny bird · suspiciously large models
 ```
 
 **Hardware-aware local LLM launcher for Mac and DGX Spark.**

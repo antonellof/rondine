@@ -61,6 +61,10 @@ class HardwareTarget:
     preferred_engine: str | None = None
     suggested_models: list[str] = field(default_factory=list)
     engine_template: str | None = None
+    # Discrete NVIDIA: match on VRAM instead of system RAM.
+    require_cuda: bool = False
+    min_vram_gb: float | None = None
+    max_vram_gb: float | None = None
 
 
 @dataclass(frozen=True)
@@ -72,8 +76,10 @@ class PlannerPolicy:
     apple_engine_order: list[str]
     spark_engine_order: list[str]
     linux_engine_order: list[str]
+    cuda_engine_order: list[str]
     default_port: int
     default_host: str
+    vram_reserve_gb: float = 1.5
 
 
 @dataclass(frozen=True)
@@ -155,6 +161,9 @@ def _parse_target(raw: dict[str, Any]) -> HardwareTarget:
         preferred_engine=raw.get("preferred_engine"),
         suggested_models=[str(x) for x in suggested],
         engine_template=raw.get("engine_template"),
+        require_cuda=bool(raw.get("require_cuda", False)),
+        min_vram_gb=float(raw["min_vram_gb"]) if "min_vram_gb" in raw else None,
+        max_vram_gb=float(raw["max_vram_gb"]) if "max_vram_gb" in raw else None,
     )
 
 
@@ -220,8 +229,10 @@ def load_catalog(directory: Path | None = None) -> Catalog:
         apple_engine_order=list(policy_raw.get("apple_engine_order", ["mlx", "llama.cpp"])),
         spark_engine_order=list(policy_raw.get("spark_engine_order", ["vllm", "llama.cpp"])),
         linux_engine_order=list(policy_raw.get("linux_engine_order", ["llama.cpp", "vllm"])),
+        cuda_engine_order=list(policy_raw.get("cuda_engine_order", ["llama.cpp", "vllm"])),
         default_port=int(policy_raw.get("default_port", 8080)),
         default_host=str(policy_raw.get("default_host", "127.0.0.1")),
+        vram_reserve_gb=float(policy_raw.get("vram_reserve_gb", 1.5)),
     )
     profiles = models_raw.get("profiles", {})
     version = int(models_raw.get("catalog", {}).get("version", 1))
