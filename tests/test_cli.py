@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from click.testing import CliRunner
 
-from rondine.cli import main
+from rondine.cli import _format_logo, main
+
+
+def test_format_logo_centers_artwork(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr("rondine.cli.brand_logo", lambda: "XX\nXXXX")
+    assert _format_logo(width=8) == "  XX\n  XXXX"
+    assert _format_logo(width=3) == "XX\nXXXX"
 
 
 def test_cli_doctor() -> None:

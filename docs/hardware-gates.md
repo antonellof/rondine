@@ -18,6 +18,13 @@ Single-node (`0.1.0`) and dual-node (`0.2.0`) gates. Fill rows on real hardware.
 | tok/s (prompt / gen) | |
 | Notes | |
 
+## Single-node NVIDIA (discrete CUDA)
+
+- [ ] `rondine doctor` reports VRAM + GPU name
+- [ ] `rondine suggest` matches `cuda-*` target and fits against VRAM
+- [ ] `rondine setup` builds/installs llama.cpp with CUDA (or vLLM on Linux)
+- [ ] `rondine serve` + `rondine verify --profile coding` pass
+
 ## Single-node Mac (Apple Silicon)
 
 - [ ] `rondine setup` installs llama.cpp and/or MLX

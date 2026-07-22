@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -41,8 +42,19 @@ ADAPTERS: dict[str, EngineAdapter] = {
 }
 
 
+def _format_logo(width: int | None = None) -> str:
+    """Center the logo when the terminal is wider than the artwork."""
+    lines = brand_logo().splitlines()
+    if not lines:
+        return ""
+    logo_width = max(len(line) for line in lines)
+    terminal_width = width or shutil.get_terminal_size(fallback=(80, 24)).columns
+    padding = " " * max(0, (terminal_width - logo_width) // 2)
+    return "\n".join(f"{padding}{line}" for line in lines)
+
+
 def _echo_logo() -> None:
-    click.echo(brand_logo())
+    click.echo(_format_logo())
     click.echo()
 
 
@@ -218,7 +230,7 @@ def _maybe_save_preset(
 @click.group()
 @click.version_option(__version__, prog_name="rondine")
 def main() -> None:
-    """Hardware-aware local LLM launcher for Mac and DGX Spark."""
+    """Hardware-aware local LLM launcher for Mac, NVIDIA GPUs, and DGX Spark."""
 
 
 @main.command()
@@ -237,6 +249,10 @@ def doctor() -> None:
     if hw.cuda_available:
         cap = ".".join(str(x) for x in hw.cuda_capability) if hw.cuda_capability else "?"
         click.echo(f"cuda: yes ({hw.gpu_name or 'gpu'}, compute {cap})")
+        if hw.vram_gb:
+            click.echo(f"vram: {hw.vram_gb} GB" + (f" ×{hw.gpu_count}" if hw.gpu_count > 1 else ""))
+        if hw.is_discrete_cuda:
+            click.echo(f"fit budget: {hw.usable_ram_gb} GB VRAM (discrete GPU)")
     else:
         click.echo("cuda: no")
     click.echo(f"metal: {hw.metal_available}")
@@ -290,7 +306,15 @@ def suggest(
 
     _echo_logo()
     click.echo(f"target: {result.target_id or '(generic)'}  ({result.target_label or 'unmatched'})")
-    click.echo(f"ram: {result.hardware['ram_gb']} GB  profile: {profile}")
+    ram = result.hardware.get("ram_gb")
+    vram = result.hardware.get("vram_gb")
+    if result.hardware.get("is_discrete_cuda") and vram:
+        click.echo(
+            f"vram: {vram} GB  ({result.hardware.get('gpu_name') or 'CUDA'})  "
+            f"system ram: {ram} GB  profile: {profile}"
+        )
+    else:
+        click.echo(f"ram: {ram} GB  profile: {profile}")
     click.echo(f"engines: {' → '.join(result.engine_order)}")
     if result.preferred_engine:
         click.echo(f"preferred engine: {result.preferred_engine}")

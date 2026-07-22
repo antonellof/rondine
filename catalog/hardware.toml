@@ -16,9 +16,13 @@ min_ram_baseline_context = 4096
 # Default preferred engines by platform (first available wins for ranking).
 apple_engine_order = ["mlx", "llama.cpp"]
 spark_engine_order = ["vllm", "llama.cpp"]
+# Discrete NVIDIA (consumer / workstation): GGUF via llama.cpp first; vLLM when VRAM is large.
+cuda_engine_order = ["llama.cpp", "vllm"]
 linux_engine_order = ["llama.cpp", "vllm"]
 default_port = 8080
 default_host = "127.0.0.1"
+# Smaller reserve when fitting against GPU VRAM (not system RAM).
+vram_reserve_gb = 1.5
 
 # ---------------------------------------------------------------------------
 # Engine performance templates (merged: defaults → profile → target override)
@@ -79,6 +83,27 @@ cache_type_k = "f16"
 cache_type_v = "f16"
 mlock = false
 
+[engines."llama.cpp".cuda]
+# Discrete NVIDIA (CUDA): full offload + flash-attn; moderate batches for coding.
+flash_attn = true
+n_gpu_layers = 99
+batch_size = 2048
+ubatch_size = 512
+cache_type_k = "q8_0"
+cache_type_v = "q8_0"
+cont_batching = true
+mlock = false
+
+[engines."llama.cpp"."cuda-tight"]
+# ≤12GB VRAM — keep prefill batches smaller.
+flash_attn = true
+n_gpu_layers = 99
+batch_size = 512
+ubatch_size = 256
+cache_type_k = "q8_0"
+cache_type_v = "q8_0"
+mlock = false
+
 [engines.mlx.defaults]
 # mlx_lm.server takes few CLI knobs; env drives Metal throughput.
 trust_remote_code = true
@@ -114,8 +139,14 @@ max_model_len = 65536
 enable_prefix_caching = true
 # MoE backend still comes from the model variant (flashinfer_b12x).
 
+[engines.vllm.cuda]
+gpu_memory_utilization = 0.90
+max_model_len = 32768
+enable_prefix_caching = true
+tensor_parallel_size = 1
+
 # ---------------------------------------------------------------------------
-# Hardware targets (matched by platform + RAM band)
+# Hardware targets (matched by platform + RAM band, or CUDA VRAM band)
 # ---------------------------------------------------------------------------
 
 [[targets]]
@@ -191,6 +222,86 @@ preferred_engine = "vllm"
 suggested_models = ["qwen3.6-35b-a3b", "deepseek-v4-flash", "gemma-4-31b"]
 engine_template = "spark"
 notes = "Blackwell GB10; prefer NVFP4 via vLLM with flashinfer_b12x."
+
+# --- Discrete NVIDIA GPUs (fit against VRAM, not system RAM) ---
+
+[[targets]]
+id = "cuda-8"
+label = "NVIDIA GPU ~8GB VRAM"
+platform = "linux"
+arch = "x86_64"
+require_cuda = true
+min_vram_gb = 6
+max_vram_gb = 10
+preferred_engine = "llama.cpp"
+suggested_models = ["gemma-4-12b"]
+engine_template = "cuda-tight"
+notes = "Laptop / entry desktop — small GGUF only."
+
+[[targets]]
+id = "cuda-12"
+label = "NVIDIA GPU ~12GB VRAM"
+platform = "linux"
+arch = "x86_64"
+require_cuda = true
+min_vram_gb = 10
+max_vram_gb = 14
+preferred_engine = "llama.cpp"
+suggested_models = ["gemma-4-12b", "qwen3.6-27b"]
+engine_template = "cuda-tight"
+notes = "RTX 4070-class — Gemma 12B / dense 27B Q4 with care."
+
+[[targets]]
+id = "cuda-16"
+label = "NVIDIA GPU ~16GB VRAM"
+platform = "linux"
+arch = "x86_64"
+require_cuda = true
+min_vram_gb = 14
+max_vram_gb = 20
+preferred_engine = "llama.cpp"
+suggested_models = ["gemma-4-12b", "qwen3.6-27b", "gemma-4-26b-a4b"]
+engine_template = "cuda"
+notes = "RTX 4080 / 4060 Ti 16GB — solid coding node."
+
+[[targets]]
+id = "cuda-24"
+label = "NVIDIA GPU ~24GB VRAM"
+platform = "linux"
+arch = "x86_64"
+require_cuda = true
+min_vram_gb = 20
+max_vram_gb = 28
+preferred_engine = "llama.cpp"
+suggested_models = ["qwen3.6-35b-a3b", "qwen3.6-27b", "gemma-4-31b"]
+engine_template = "cuda"
+notes = "RTX 4090 / 3090 — MoE 35B-A3B and dense 27–31B comfortable."
+
+[[targets]]
+id = "cuda-48"
+label = "NVIDIA GPU ~48GB VRAM"
+platform = "linux"
+arch = "x86_64"
+require_cuda = true
+min_vram_gb = 40
+max_vram_gb = 56
+preferred_engine = "vllm"
+suggested_models = ["qwen3.6-35b-a3b", "deepseek-v4-flash", "gemma-4-31b"]
+engine_template = "cuda"
+notes = "Ada / Ampere workstation — prefer vLLM when installed."
+
+[[targets]]
+id = "cuda-80"
+label = "NVIDIA GPU ~80GB+ VRAM"
+platform = "linux"
+arch = "x86_64"
+require_cuda = true
+min_vram_gb = 70
+max_vram_gb = 200
+preferred_engine = "vllm"
+suggested_models = ["deepseek-v4-flash", "qwen3.6-35b-a3b", "glm-5.2"]
+engine_template = "cuda"
+notes = "A100 / H100 class — large MoE and long context."
 
 [[targets]]
 id = "cluster-mac-2x256"

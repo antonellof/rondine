@@ -70,7 +70,7 @@ def _candidate_to_selected(cand: PlanCandidate, engine_args: dict[str, Any]) -> 
 def _next_steps(model_id: str, profile: str, preset_hint: str | None = None) -> list[str]:
     steps = [
         f"rondine plan {model_id} --profile {profile}",
-        f"rondine setup",
+        "rondine setup",
         f"rondine pull {model_id}",
         f"rondine serve {model_id} --profile {profile}",
     ]
@@ -203,8 +203,11 @@ def suggest_for_hardware(
             "ram_gb": hw.ram_gb,
             "is_apple_silicon": hw.is_apple_silicon,
             "is_spark": hw.is_spark,
+            "is_discrete_cuda": hw.is_discrete_cuda,
             "cuda_available": hw.cuda_available,
             "gpu_name": hw.gpu_name,
+            "vram_gb": hw.vram_gb,
+            "gpu_count": hw.gpu_count,
         },
         target_id=target_id,
         target_label=target.label if target else None,

@@ -12,20 +12,21 @@
      /    .'    r o n d i n e   `.    \
     |   .'                       `.   |
      \_/                           \_/
-          tiny bird · suspiciously large models
+   tiny bird · suspiciously large models
 ```
 
-**Hardware-aware local LLM launcher for Mac and DGX Spark.**
+**Hardware-aware local LLM launcher for Mac, NVIDIA GPUs, and DGX Spark.**
 
 Rondine is a thin control plane over battle-tested backends:
 
 | Hardware | Engine | Format |
 |---|---|---|
 | Apple Silicon | MLX-LM or llama.cpp | MLX / GGUF |
+| NVIDIA discrete GPU | llama.cpp or vLLM | GGUF / safetensors / NVFP4 |
 | DGX Spark / GB10 | vLLM or llama.cpp | NVFP4 / GGUF |
 | Homogeneous clusters | MLX / vLLM / llama.cpp RPC | native per engine |
 
-It scans your machine, suggests models that fit, builds engine-tuned launch configs, downloads weights, and starts an OpenAI-compatible local server. Named presets make restart one command.
+It scans your machine (RAM or **GPU VRAM**), suggests models that fit, builds engine-tuned launch configs, downloads weights, and starts an OpenAI-compatible local server. Named presets make restart one command.
 
 Rondine does **not** reinvent inference. It installs and drives llama.cpp, MLX-LM, and vLLM.
 
@@ -68,11 +69,13 @@ rondine preset serve coding --dry-run
 
 ## How suggestion works
 
-1. **Detect** RAM / Apple Silicon / Spark / CUDA and which engines are installed.
-2. **Match** a hardware target (`mac-36`, `spark-128`, …) with preferred engine + suggested models.
+1. **Detect** RAM / VRAM / Apple Silicon / Spark / CUDA and which engines are installed.
+2. **Match** a hardware target (`mac-36`, `cuda-24`, `spark-128`, …) with preferred engine + suggested models.
 3. **Score** curated variants (provider, quant, headroom, coding priority).
 4. **Configure** engine knobs from `catalog/hardware.toml` templates (llama.cpp `-ngl` / batch / KV cache, vLLM `--gpu-memory-utilization` / `--max-model-len`, …).
 5. **Save** a plan + optional named preset under `~/.rondine/presets/` for one-command restart.
+
+On discrete NVIDIA GPUs, fit estimates use **GPU VRAM** (not system RAM). Multi-GPU hosts size against GPU0 by default; tensor parallel is opt-in.
 
 ## Commands
 

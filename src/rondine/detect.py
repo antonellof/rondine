@@ -42,7 +42,12 @@ class HardwareInfo:
     @property
     def is_discrete_cuda(self) -> bool:
         """True for consumer/workstation NVIDIA GPUs (not Apple Silicon / Spark unified)."""
-        return bool(self.cuda_available and self.vram_gb > 0 and not self.is_spark and not self.is_apple_silicon)
+        return bool(
+            self.cuda_available
+            and self.vram_gb > 0
+            and not self.is_spark
+            and not self.is_apple_silicon
+        )
 
     @property
     def usable_ram_gb(self) -> float:

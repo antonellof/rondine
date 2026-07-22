@@ -16,9 +16,14 @@ def test_load_catalog() -> None:
     assert catalog.targets
     assert "llama.cpp" in catalog.engine_templates
     assert "defaults" in catalog.engine_templates["llama.cpp"]
+    assert "cuda" in catalog.engine_templates["llama.cpp"]
     mac36 = next(t for t in catalog.targets if t.id == "mac-36")
     assert mac36.suggested_models
     assert mac36.preferred_engine == "mlx"
+    cuda24 = next(t for t in catalog.targets if t.id == "cuda-24")
+    assert cuda24.require_cuda
+    assert cuda24.min_vram_gb == 20
+
 
 
 def test_get_model_and_profile() -> None:

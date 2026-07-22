@@ -73,12 +73,21 @@ class PlanResult:
     target_id: str | None = None
 
 
+def available_memory_gb(catalog: Catalog, hw: HardwareInfo) -> tuple[float, float]:
+    """Return (available_gb, os_or_vram_reserve) for fit estimates."""
+    if hw.is_discrete_cuda:
+        return hw.vram_gb, catalog.policy.vram_reserve_gb
+    return hw.ram_gb, catalog.policy.os_reserve_gb
+
+
 def estimate_memory(
     catalog: Catalog,
     model: ModelEntry,
     variant: ModelVariant,
     context: int,
     available_gb: float,
+    *,
+    reserve_gb: float | None = None,
 ) -> FitEstimate:
     weight = float(variant.weight_gb)
     active_b = _parse_active_b(model.active_params)
@@ -87,7 +96,7 @@ def estimate_memory(
     # Full KV estimate for reporting.
     kv = context * active_b * coeff
     activation = weight * catalog.policy.activation_margin
-    os_reserve = catalog.policy.os_reserve_gb
+    os_reserve = float(reserve_gb if reserve_gb is not None else catalog.policy.os_reserve_gb)
     base = weight + activation + os_reserve
     if variant.min_ram_gb is not None:
         # Vendor min_ram already covers a short context; only charge extra tokens.
@@ -113,6 +122,8 @@ def engine_order(catalog: Catalog, hw: HardwareInfo) -> list[str]:
         return list(catalog.policy.apple_engine_order)
     if hw.is_spark:
         return list(catalog.policy.spark_engine_order)
+    if hw.is_discrete_cuda:
+        return list(catalog.policy.cuda_engine_order)
     if hw.platform == "linux":
         return list(catalog.policy.linux_engine_order)
     return ["llama.cpp"]
@@ -124,8 +135,10 @@ def engine_usable(hw: HardwareInfo, engine: str) -> tuple[bool, str]:
             return False, "MLX requires Apple Silicon"
         return True, ""
     if engine == "vllm":
-        if hw.platform != "linux":
-            return False, "vLLM path targets Linux / Spark"
+        if hw.platform not in {"linux", "windows"}:
+            return False, "vLLM path targets Linux / CUDA hosts"
+        if hw.platform == "windows":
+            return False, "vLLM on Windows is experimental; prefer llama.cpp"
         if not hw.cuda_available and not hw.is_spark:
             return False, "CUDA / Spark required for vLLM"
         return True, ""
@@ -138,6 +151,29 @@ def match_target(catalog: Catalog, hw: HardwareInfo) -> str | None:
     for target in catalog.targets:
         if target.cluster:
             continue
+
+        # Discrete NVIDIA: match VRAM band (linux/windows x86_64).
+        if target.require_cuda or target.min_vram_gb is not None:
+            if hw.is_spark or hw.is_apple_silicon:
+                continue
+            if not hw.cuda_available:
+                continue
+            if target.platform not in {hw.platform, "any", "*"}:
+                # Allow linux-defined CUDA targets on Windows workstations too.
+                if not (target.platform == "linux" and hw.platform == "windows"):
+                    continue
+            if target.arch == "x86_64" and hw.arch != "x86_64":
+                continue
+            vram = hw.vram_gb
+            lo = target.min_vram_gb if target.min_vram_gb is not None else 0.0
+            hi = target.max_vram_gb if target.max_vram_gb is not None else 1e9
+            if not (lo <= vram <= hi):
+                continue
+            if target.cuda_capability_major and hw.cuda_capability:
+                if hw.cuda_capability[0] < target.cuda_capability_major:
+                    continue
+            return target.id
+
         if target.platform != hw.platform:
             continue
         # arch soft-match: arm64 vs aarch64
@@ -218,6 +254,9 @@ def plan_model(
     target = get_target(catalog, target_id) if target_id else None
     preferred_engine = target.preferred_engine if target else None
     template_layer = target.engine_template if target else None
+    avail_gb, reserve_gb = available_memory_gb(catalog, hw)
+    # Large opt-in models: gate on usable budget (VRAM or unified RAM).
+    opt_in_budget = avail_gb if hw.is_discrete_cuda else hw.ram_gb
 
     models: list[ModelEntry]
     if model_id and model_id != "auto":
@@ -226,7 +265,7 @@ def plan_model(
         models = [
             m
             for m in catalog.models
-            if include_opt_in or not m.opt_in or (m.opt_in and hw.ram_gb >= 200)
+            if include_opt_in or not m.opt_in or (m.opt_in and opt_in_budget >= 200)
         ]
         if prefer_coding:
             models = sorted(models, key=lambda m: m.coding_priority, reverse=True)
@@ -238,7 +277,9 @@ def plan_model(
         context = min(context, model.max_context)
         for variant in model.variants:
             ok, reason = engine_usable(hw, variant.engine)
-            estimate = estimate_memory(catalog, model, variant, context, hw.ram_gb)
+            estimate = estimate_memory(
+                catalog, model, variant, context, avail_gb, reserve_gb=reserve_gb
+            )
             sampling = {
                 k: v
                 for k, v in settings.items()
@@ -281,9 +322,11 @@ def plan_model(
                 cand.score = -1e6
                 cand.reasons.append(reason)
             elif not estimate.fits:
+                unit = "VRAM" if hw.is_discrete_cuda else "RAM"
                 cand.rejected = True
                 cand.reject_reason = (
-                    f"needs ~{estimate.total_gb:.0f}GB, have {estimate.available_gb:.0f}GB"
+                    f"needs ~{estimate.total_gb:.0f}GB {unit}, "
+                    f"have {estimate.available_gb:.0f}GB"
                 )
                 cand.score = -1e6
                 cand.reasons.append(cand.reject_reason)
@@ -300,10 +343,14 @@ def plan_model(
                 cand.reasons.append(f"engine preference order: {order}")
                 if preferred_engine:
                     cand.reasons.append(f"target preferred engine: {preferred_engine}")
+                if hw.is_discrete_cuda:
+                    cand.reasons.append(
+                        f"fit against GPU VRAM {avail_gb:.0f}GB ({hw.gpu_name or 'CUDA'})"
+                    )
                 cand.reasons.append(
                     f"est {estimate.total_gb:.0f}GB "
                     f"(weights {estimate.weight_gb:.0f} + kv {estimate.kv_gb:.1f} "
-                    f"+ act {estimate.activation_gb:.1f} + os {estimate.os_reserve_gb:.0f})"
+                    f"+ act {estimate.activation_gb:.1f} + reserve {estimate.os_reserve_gb:.0f})"
                 )
             candidates.append(cand)
 
@@ -316,8 +363,11 @@ def plan_model(
         "arch": hw.arch,
         "hostname": hw.hostname,
         "ram_gb": hw.ram_gb,
+        "vram_gb": hw.vram_gb,
+        "gpu_count": hw.gpu_count,
         "is_apple_silicon": hw.is_apple_silicon,
         "is_spark": hw.is_spark,
+        "is_discrete_cuda": hw.is_discrete_cuda,
         "cuda_available": hw.cuda_available,
         "cuda_capability": hw.cuda_capability,
         "gpu_name": hw.gpu_name,

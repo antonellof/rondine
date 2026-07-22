@@ -7,12 +7,16 @@ from rondine.detect import EngineStatus, HardwareInfo
 from rondine.suggest import suggest_for_hardware
 
 
-def _hw(*, ram: float, apple: bool = True, spark: bool = False) -> HardwareInfo:
+def _hw(*, ram: float, apple: bool = True, spark: bool = False, vram: float = 0.0) -> HardwareInfo:
     if spark:
         platform, arch = "linux", "aarch64"
         apple = False
+    elif vram > 0:
+        platform, arch = "linux", "x86_64"
+        apple = False
     else:
         platform, arch = "darwin", "arm64"
+    cuda = spark or vram > 0
     return HardwareInfo(
         platform=platform,
         arch=arch,
@@ -20,14 +24,16 @@ def _hw(*, ram: float, apple: bool = True, spark: bool = False) -> HardwareInfo:
         ram_gb=ram,
         is_apple_silicon=apple,
         is_spark=spark,
-        cuda_available=spark,
-        cuda_capability=(12, 1) if spark else None,
-        gpu_name="NVIDIA GB10" if spark else "",
+        cuda_available=cuda,
+        cuda_capability=(12, 1) if spark else ((8, 9) if vram else None),
+        gpu_name="NVIDIA GB10" if spark else ("NVIDIA GeForce RTX 4090" if vram else ""),
+        vram_gb=ram if spark else vram,
+        gpu_count=1 if cuda else 0,
         metal_available=apple,
         engines=[
             EngineStatus("llama.cpp", True, path="/usr/bin/llama-server"),
             EngineStatus("mlx", apple, detail="test"),
-            EngineStatus("vllm", spark, detail="test"),
+            EngineStatus("vllm", spark or vram >= 40, detail="test"),
         ],
     )
 
@@ -51,6 +57,18 @@ def test_suggest_spark_prefers_vllm() -> None:
     assert result.preferred_engine == "vllm"
     assert result.suggestions
     assert result.suggestions[0].engine == "vllm"
+
+
+def test_suggest_cuda_24() -> None:
+    catalog = load_catalog()
+    result = suggest_for_hardware(
+        catalog, _hw(ram=64, apple=False, vram=24.0), profile="coding", limit=3
+    )
+    assert result.target_id == "cuda-24"
+    assert result.preferred_engine == "llama.cpp"
+    assert result.suggestions
+    assert result.suggestions[0].engine == "llama.cpp"
+    assert "batch_size" in result.suggestions[0].engine_args
 
 
 def test_resolve_engine_args_merges_layers() -> None:

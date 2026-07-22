@@ -27,6 +27,13 @@ useful when serving many concurrent clients; coding presets stay single-slot.
 - Set `MLX_METAL_FAST_SYNCH=1` for Metal sync throughput (large wins on clusters).
 - Single-host `mlx_lm.server`; multi-Mac uses JACCL / `mlx.launch` (see cluster docs).
 
+## Discrete NVIDIA + llama.cpp / vLLM
+
+- Fit against **VRAM**, not system RAM (`cuda-8` … `cuda-80` targets).
+- Default engine order: llama.cpp then vLLM (consumer-friendly GGUF path).
+- Large VRAM targets (`cuda-48`+) prefer vLLM when available.
+- Templates: `cuda` (batch 2048) and `cuda-tight` (≤12GB VRAM).
+
 ## DGX Spark + vLLM
 
 - Prefer NVFP4 / engine-native formats when available.

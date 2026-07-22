@@ -13,14 +13,20 @@ def _hw(
     apple: bool = False,
     spark: bool = False,
     linux: bool = False,
+    vram: float = 0.0,
+    gpu_name: str = "",
 ) -> HardwareInfo:
     if apple:
         platform, arch = "darwin", "arm64"
-    elif spark or linux:
-        platform, arch = "linux", "aarch64" if spark else "x86_64"
+    elif spark:
+        platform, arch = "linux", "aarch64"
+    elif linux or vram > 0:
+        platform, arch = "linux", "x86_64"
+        linux = True
     else:
         platform, arch = "darwin", "arm64"
         apple = True
+    cuda = spark or vram > 0
     return HardwareInfo(
         platform=platform,
         arch=arch,
@@ -28,14 +34,17 @@ def _hw(
         ram_gb=ram,
         is_apple_silicon=apple,
         is_spark=spark,
-        cuda_available=spark or (linux and False),
-        cuda_capability=(12, 1) if spark else None,
-        gpu_name="NVIDIA GB10" if spark else "",
+        cuda_available=cuda,
+        cuda_capability=(12, 1) if spark else ((8, 9) if vram else None),
+        gpu_name=gpu_name
+        or ("NVIDIA GB10" if spark else ("NVIDIA GeForce RTX 4090" if vram else "")),
+        vram_gb=ram if spark else vram,
+        gpu_count=1 if cuda else 0,
         metal_available=apple,
         engines=[
             EngineStatus("llama.cpp", True, path="/usr/bin/llama-server"),
             EngineStatus("mlx", apple, detail="test"),
-            EngineStatus("vllm", spark, detail="test"),
+            EngineStatus("vllm", spark or (linux and vram >= 40), detail="test"),
         ],
     )
 
@@ -77,6 +86,30 @@ def test_spark_prefers_vllm_nvfp4() -> None:
     assert result.selected is not None
     assert result.selected.engine == "vllm"
     assert result.selected.format == "nvfp4"
+
+
+def test_cuda_24_matches_vram_target() -> None:
+    catalog = load_catalog()
+    hw = _hw(ram=64, vram=24.0, gpu_name="NVIDIA GeForce RTX 4090")
+    result = plan_model(catalog, hw, None, profile="coding")
+    assert result.target_id == "cuda-24"
+    assert result.selected is not None
+    assert result.selected.engine == "llama.cpp"
+    # Fit against VRAM, not system RAM
+    assert result.selected.estimate.available_gb == 24.0
+
+
+def test_cuda_8_rejects_large_models() -> None:
+    catalog = load_catalog()
+    hw = _hw(ram=32, vram=8.0, gpu_name="NVIDIA GeForce RTX 4060")
+    result = plan_model(catalog, hw, "qwen3.6-35b-a3b", profile="coding", include_opt_in=True)
+    assert result.target_id == "cuda-8"
+    assert result.selected is None or result.selected.estimate.fits
+    # 35B-A3B Q4 (~20GB) should not fit 8GB
+    if result.selected:
+        assert result.selected.weight_gb < 10
+    else:
+        assert any(c.rejected for c in result.candidates)
 
 
 def test_deepseek_fits_128gb() -> None:
