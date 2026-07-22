@@ -104,6 +104,32 @@ cache_type_k = "q8_0"
 cache_type_v = "q8_0"
 mlock = false
 
+[engines."llama.cpp"."hybrid-moe"]
+# Discrete GPU plus sufficient system RAM: keep experts CPU-side and let
+# llama.cpp fit the remaining layers to VRAM.
+n_gpu_layers = "auto"
+cpu_moe = true
+fit = true
+fit_target = 1536
+mmap = true
+mlock = false
+parallel = 1
+cache_type_k = "q4_1"
+cache_type_v = "q4_1"
+
+[engines."llama.cpp"."mmap-experimental"]
+# Explicit opt-in only. The planner forces CPU-only on Apple Silicon.
+n_gpu_layers = 0
+cpu_moe = true
+fit = false
+mmap = true
+mlock = false
+parallel = 1
+batch_size = 128
+ubatch_size = 64
+cache_type_k = "q4_1"
+cache_type_v = "q4_1"
+
 [engines.mlx.defaults]
 # mlx_lm.server takes few CLI knobs; env drives Metal throughput.
 trust_remote_code = true

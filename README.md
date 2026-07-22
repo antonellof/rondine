@@ -15,49 +15,43 @@
    tiny bird · suspiciously large models
 ```
 
-**Hardware-aware local LLM launcher for Mac, NVIDIA GPUs, and DGX Spark.**
+**Hardware-aware local LLM launcher for Apple Silicon, NVIDIA GPUs, and DGX Spark.**
 
-Rondine ships **optimized serve configurations** per machine class — engine flags, batch sizes, KV cache settings, and sampling profiles tuned for Apple Silicon, discrete NVIDIA GPUs, and DGX Spark — so you get strong local throughput without hand-tuning llama.cpp / MLX / vLLM.
-
-Rondine is a thin control plane over battle-tested backends:
-
-| Hardware | Engine | Format |
-|---|---|---|
-| Apple Silicon | MLX-LM or llama.cpp | MLX / GGUF |
-| NVIDIA discrete GPU | llama.cpp or vLLM | GGUF / safetensors / NVFP4 |
-| DGX Spark / GB10 | vLLM or llama.cpp | NVFP4 / GGUF |
-| Homogeneous clusters | MLX / vLLM / llama.cpp RPC | native per engine |
-
-It scans your machine (RAM or **GPU VRAM**), suggests models that fit, applies those hardware-tuned configs, downloads weights, and starts an OpenAI-compatible local server. Named presets make restart one command.
-
-Rondine does **not** reinvent inference. It installs and drives llama.cpp, MLX-LM, and vLLM.
-
-## Install
-
-```bash
-uv tool install .
-# or editable:
-uv pip install -e ".[dev]"
-```
-
-Requires Python 3.11+.
+Rondine detects RAM and VRAM, recommends models that fit, applies tuned engine
+settings, downloads the weights, and starts an OpenAI-compatible server. It is a
+thin control plane over llama.cpp, MLX-LM, and vLLM—not another inference engine.
 
 ## Quick start
 
+Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+
 ```bash
-rondine doctor                         # scan hardware + engines
-rondine suggest --profile coding       # ranked models + engine configs for this machine
+git clone https://github.com/antonellof/rondine.git
+cd rondine
+uv tool install .
+
+rondine doctor
+rondine suggest --profile coding
 rondine suggest --configure 1 --save-as coding
 rondine setup
-rondine pull                           # uses the configured plan
+rondine pull
 rondine serve --preset coding
 rondine verify --profile coding
 ```
 
-### Small-model serve test
+Your OpenAI-compatible endpoint is `http://127.0.0.1:8080/v1`.
 
-Use the curated 2GB Qwen2.5-Coder model to verify the complete
-plan → pull → serve → OpenAI API path without downloading a large model:
+`--profile coding` favors coding models, a 32K context, reasoning settings, and
+single-client engine tuning. Use `--profile chat` for a 16K context and
+chat-oriented sampling/concurrency. See the [CLI guide](docs/cli.md#suggest) for
+every `suggest` option, including `--limit`, `--opt-in`, `--json`,
+`--configure`, and `--save-as`.
+
+![Rondine doctor and suggest terminal demo](assets/rondine-demo.gif)
+
+### Small-model smoke test
+
+Test the complete plan → pull → serve → verify path with a curated 2GB model:
 
 ```bash
 rondine plan qwen2.5-coder-3b --context 4096 --save-as small-coder
@@ -67,91 +61,82 @@ rondine verify --name small-coder
 rondine stop --name small-coder
 ```
 
-For an approximately 1GB smoke test, replace `qwen2.5-coder-3b` with
-`qwen2.5-coder-1.5b`. Both use official Qwen GGUF weights and llama.cpp.
+Use `qwen2.5-coder-1.5b` instead for an approximately 1GB download.
 
-Discover more on the Hub when the curated list isn’t enough:
+## What Rondine configures
+
+- **Apple Silicon:** MLX-LM or llama.cpp with MLX/GGUF models
+- **NVIDIA GPUs:** llama.cpp or vLLM with GGUF, safetensors, or NVFP4 models
+- **DGX Spark / GB10:** vLLM or llama.cpp with NVFP4/GGUF models
+- **Homogeneous clusters:** native MLX/vLLM launchers or llama.cpp RPC
+
+Hardware templates tune GPU offload, batch sizes, KV cache, parallelism, and
+memory utilization. `rondine suggest` shows the resolved configuration before
+`serve` applies it. On discrete GPUs, fit calculations use VRAM rather than
+system RAM.
+
+## Hybrid and oversized models
+
+For a discrete GPU with enough system RAM, llama.cpp can keep MoE experts in
+RAM while fitting dense layers to VRAM:
 
 ```bash
-rondine search "Qwen3.6 35B GGUF"
-rondine inspect org/model-repo
-rondine plan org/model-repo --quant Q4_K_M --save-as qwen-gguf
+rondine plan glm-5.2 --memory-mode hybrid --context 4096 --save-as glm-hybrid
+rondine pull
+rondine serve --preset glm-hybrid
 ```
 
-Dry-run any launch:
+`auto` may choose this supported hybrid path when VRAM alone is insufficient but
+combined RAM and VRAM meet the model requirement.
+
+SSD-backed `mmap` is a separate, experimental escape hatch. It demand-pages
+GGUF weights and is not true expert streaming:
 
 ```bash
-rondine serve qwen3.6-27b --profile coding --dry-run
-rondine preset serve coding --dry-run
+rondine plan glm-5.2 --quant UD-IQ1_S --context 4096 \
+  --memory-mode mmap --allow-oversize --save-as glm-ssd
+rondine pull
+rondine serve --preset glm-ssd
 ```
 
-ASCII demo:
+GLM-5.2 `UD-IQ1_S` needs about 223GB resident memory for practical use and at
+least 230GB free disk. A 32GB Mac may map it, but page thrashing is expected to
+make it unusably slow; Rondine therefore never selects this mode automatically.
 
-![rondine doctor + suggest](assets/rondine-demo.gif)
+## Useful commands
 
-## How suggestion works
-
-1. **Detect** RAM / VRAM / Apple Silicon / Spark / CUDA and which engines are installed.
-2. **Match** a hardware target (`mac-36`, `cuda-24`, `spark-128`, …) with preferred engine + suggested models.
-3. **Score** curated variants (provider, quant, headroom, coding priority).
-4. **Configure** engine knobs from `catalog/hardware.toml` templates (llama.cpp `-ngl` / batch / KV cache, vLLM `--gpu-memory-utilization` / `--max-model-len`, …).
-5. **Save** a plan + optional named preset under `~/.rondine/presets/` for one-command restart.
-
-On discrete NVIDIA GPUs, fit estimates use **GPU VRAM** (not system RAM). Multi-GPU hosts size against GPU0 by default; tensor parallel is opt-in.
-
-## Optimized configurations
-
-Curated templates in `catalog/hardware.toml` merge **defaults → profile (`coding`/`chat`) → hardware class** (`mac`, `mac-tight`, `cuda`, `cuda-tight`, `spark`):
-
-- **llama.cpp** — GPU offload, flash-attn, batch/ubatch, KV cache quant, parallel slots
-- **MLX** — Metal sync env (`MLX_METAL_FAST_SYNCH`) for Apple Silicon throughput
-- **vLLM** — memory utilization, max model length, prefix caching (Spark / large CUDA)
-
-`rondine suggest` prints the resolved config; `serve` applies it. Details: [docs/engine-tuning.md](docs/engine-tuning.md).
-
-## Benchmark
-
-On an Apple M2 Pro with 32GB unified memory, the 1.95GiB
-Qwen2.5-Coder 3B Q4_K_M model passed health, code generation, and tool-call
-verification while fully offloaded to Metal. Three 128-token coding runs
-measured 64.4, 66.6, and 66.7 tokens/second (66.6 median).
-
-See [docs/benchmarks.md](docs/benchmarks.md) for the commands, environment,
-memory observations, and limitations.
-
-## Commands
-
-| Command | Purpose |
-|---|---|
-| `doctor` | Probe hardware, engines, and memory |
-| `suggest` | Rank models that fit + show launch configs |
-| `models` | List curated catalog entries and fit status |
-| `search` | Live Hugging Face Hub discovery |
-| `inspect` | Hub repo files, sizes, recommended quant |
-| `plan` | Recommend engine / quant (catalog id, auto, or `org/name`) |
-| `setup` | Install pinned engine toolchains |
-| `pull` | Download a model for the resolved plan |
-| `serve` | Launch OpenAI-compatible server (`--preset`, `--save-as`) |
-| `preset` | `list` / `show` / `save` / `serve` / `delete` named presets |
-| `stop` | Stop a managed server |
-| `verify` | Health + coding smoke tests |
-| `cluster doctor/plan/serve` | Homogeneous dual-node helpers |
-
-## Coding clients
-
-Point any OpenAI-compatible coding client at:
-
-```text
-http://127.0.0.1:8080/v1
+```bash
+rondine models                         # curated models and fit status
+rondine search "Qwen GGUF"             # search Hugging Face
+rondine inspect org/model-repo         # inspect files, sizes, and quants
+rondine plan org/model-repo --quant Q4_K_M --save-as custom
+rondine preset list
+rondine preset serve coding --dry-run  # inspect without starting
 ```
 
-See [docs/coding.md](docs/coding.md) and [docs/engine-tuning.md](docs/engine-tuning.md).
+## Performance
 
-## Cluster notes (0.2)
+On a 32GB M2 Pro, Qwen2.5-Coder 3B Q4_K_M ran fully on Metal at a median
+66.6 tokens/second across three 128-token coding runs. See
+[benchmarks](docs/benchmarks.md) for the method and limitations.
 
-- Mac: MLX `mlx.launch` JACCL for supported models; llama.cpp RPC is experimental and trusted-LAN only.
-- Spark: NVIDIA container + Ray/NCCL over RoCE; no silent Ethernet fallback.
+## Documentation
+
+- [CLI guide and `suggest` options](docs/cli.md)
+- [Coding-client setup](docs/coding.md)
+- [Engine tuning](docs/engine-tuning.md)
+- [Hardware gates](docs/hardware-gates.md)
+- [Cluster setup](docs/cluster.md)
+- [Benchmarks](docs/benchmarks.md)
 
 ## License
 
 Apache-2.0. Model weights retain their upstream licenses.
+
+---
+
+<p align="center">
+  <img src="assets/rondine-swallow.png" alt="A swallow" width="220">
+  <br>
+  <em>Rondine means “swallow” in Italian.</em>
+</p>

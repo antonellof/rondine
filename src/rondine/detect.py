@@ -36,6 +36,8 @@ class HardwareInfo:
     vram_gb: float = 0.0
     gpu_count: int = 0
     metal_available: bool = False
+    disk_free_gb: float = 0.0
+    disk_total_gb: float = 0.0
     engines: list[EngineStatus] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -97,6 +99,16 @@ def _ram_gb() -> float:
         return float(psutil.virtual_memory().total) / (1024**3)
     except Exception:
         return 0.0
+
+
+def _disk_gb() -> tuple[float, float]:
+    """Return free and total space for the Rondine model volume."""
+    try:
+        usage = shutil.disk_usage(os.environ.get("RONDINE_HOME") or os.path.expanduser("~"))
+    except OSError:
+        return 0.0, 0.0
+    scale = float(1024**3)
+    return usage.free / scale, usage.total / scale
 
 
 def _cpu_brand() -> str:
@@ -253,6 +265,7 @@ def detect_hardware() -> HardwareInfo:
         arch_norm = arch
 
     ram = _ram_gb()
+    disk_free, disk_total = _disk_gb()
     cuda = _detect_cuda()
     apple = plat == "darwin" and arch_norm == "arm64"
     spark = _looks_like_spark(cuda.gpu_name, arch_norm, ram)
@@ -273,6 +286,8 @@ def detect_hardware() -> HardwareInfo:
         vram_gb=cuda.vram_gb if not spark else round(ram, 1),
         gpu_count=cuda.gpu_count,
         metal_available=apple,
+        disk_free_gb=round(disk_free, 1),
+        disk_total_gb=round(disk_total, 1),
         engines=[_engine_llama(), _engine_mlx(), _engine_vllm()],
     )
     if apple and not shutil.which("llama-server"):

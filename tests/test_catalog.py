@@ -30,6 +30,13 @@ def test_load_catalog() -> None:
         "qwen2.5-coder-3b",
         "qwen2.5-coder-1.5b",
     ]
+    assert "hybrid-moe" in catalog.engine_templates["llama.cpp"]
+    assert "mmap-experimental" in catalog.engine_templates["llama.cpp"]
+
+    glm = get_model(catalog, "glm-5.2")
+    assert glm.moe
+    quants = {variant.quant for variant in glm.variants}
+    assert {"UD-IQ1_S", "UD-IQ1_M", "UD-IQ2_M", "UD-Q3_K_M", "UD-Q4_K_M"} <= quants
 
 
 

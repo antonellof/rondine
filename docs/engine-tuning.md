@@ -3,7 +3,9 @@
 Rondine ships **optimized configurations** for common local hardware. Performance knobs
 are merged from `catalog/hardware.toml`:
 
-`defaults` → profile (`coding` / `chat`) → hardware template (`mac`, `mac-tight`, `cuda`, `cuda-tight`, `spark`).
+`defaults` → profile (`coding` / `chat`) → hardware template (`mac`,
+`mac-tight`, `cuda`, `cuda-tight`, `spark`, `hybrid-moe`, or
+`mmap-experimental`).
 
 ## Apple Silicon + llama.cpp
 
@@ -46,6 +48,42 @@ useful when serving many concurrent clients; coding presets stay single-slot.
 Unified-memory machines typically cannot dedicate 100% of RAM to weights + KV.
 Rondine reserves OS headroom in the planner; treat ~70–75% of system RAM as a
 practical inference budget when estimating by hand.
+
+### Resident, hybrid, and mmap modes
+
+- `resident` requires the full supported estimate to fit VRAM or unified memory.
+- `hybrid` is for llama.cpp GGUFs on discrete CUDA hosts. Rondine combines RAM
+  and VRAM for capacity, emits `--n-gpu-layers auto --fit`, and uses
+  `--cpu-moe` for MoE models. Placement is still controlled by llama.cpp, so the
+  combined estimate is approximate.
+- `mmap` is an explicit experimental mode for a GGUF larger than physical
+  memory. It keeps mmap enabled, disables mlock, uses one slot and q4_1 KV, and
+  requires `--allow-oversize`. A non-fitting mmap plan remains marked
+  `fits=false`; it is not promoted to a supported fit.
+
+On oversized Apple Silicon launches Rondine forces `-ngl 0`. CPU and Metal use
+the same unified memory, so GPU offload adds no capacity, and current partial
+Metal mmap paths can register a very large residency span and OOM. On discrete
+GPUs, supported hybrid plans may use auto-fit GPU layers.
+
+Default mmap is demand paging through the operating-system page cache, not a
+dedicated expert streamer. The proposed llama.cpp `--moe-stream*` flags remain
+unmerged, so Rondine does not emit them. GLM-5.2's complete IndexShare/DSA and
+MTP optimizations are also still pending upstream; current llama.cpp support
+means the model can load and generate, not that every architecture optimization
+is available.
+
+### GLM-5.2 capacity
+
+The smallest curated quant, `UD-IQ1_S`, has six shards totaling 216.715GB and a
+documented practical memory floor near 223GB. `UD-IQ2_M` totals 238.578GB and
+needs about 245GB. Rondine also catalogs verified 1-, 3-, and 4-bit quality
+tiers for larger-memory machines.
+
+A 32GB M2 Pro can only attempt pathological SSD paging. Even though mmap may
+make the file addressable, changing expert routes can repeatedly fault pages
+from storage. Reserve at least 230GB free disk for `UD-IQ1_S` and expect
+diagnostic, not interactive, performance.
 
 ## Measured baseline
 

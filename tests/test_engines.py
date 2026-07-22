@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
+
 from rondine.engines.llama_cpp import LlamaCppAdapter
 from rondine.engines.mlx import MlxAdapter
 from rondine.engines.vllm import VllmAdapter
@@ -66,6 +70,49 @@ def test_llama_mtp_flags() -> None:
     spec = LlamaCppAdapter().build_serve(plan, host="127.0.0.1", port=8081)
     assert "--spec-type" in spec.argv
     assert "draft-mtp" in spec.argv
+
+
+def test_llama_hybrid_and_mmap_flags() -> None:
+    plan = _plan("llama.cpp")
+    plan["selected"]["engine_args"] = {
+        "n_gpu_layers": "auto",
+        "fit": True,
+        "fit_target": 1536,
+        "mmap": True,
+        "cpu_moe": True,
+        "split_mode": "layer",
+        "tensor_split": [3, 1],
+        "cache_type_k": "q4_1",
+        "cache_type_v": "q4_1",
+    }
+    spec = LlamaCppAdapter().build_serve(plan, host="127.0.0.1", port=8082)
+    assert ["-ngl", "auto"] == spec.argv[
+        spec.argv.index("-ngl") : spec.argv.index("-ngl") + 2
+    ]
+    for flag in [
+        "--fit",
+        "--fit-target",
+        "--mmap",
+        "--cpu-moe",
+        "--split-mode",
+        "--tensor-split",
+    ]:
+        assert flag in spec.argv
+    assert "3,1" in spec.argv
+    assert not any(arg.startswith("--moe-stream") for arg in spec.argv)
+
+
+def test_llama_pull_rejects_insufficient_disk(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    adapter = LlamaCppAdapter()
+    monkeypatch.setattr(adapter, "model_dir", lambda repo: tmp_path)
+    monkeypatch.setattr(
+        "rondine.engines.llama_cpp.shutil.disk_usage",
+        lambda path: SimpleNamespace(free=10 * 1024**3),
+    )
+    plan = _plan("llama.cpp", weight_gb=216.72)
+    plan["selected"]["estimate"] = {"disk_required_gb": 227.56}
+    with pytest.raises(RuntimeError, match="insufficient disk space"):
+        adapter.pull(plan, dry_run=False)
 
 
 def test_mlx_serve_module() -> None:

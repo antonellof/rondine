@@ -15,6 +15,7 @@ def _hw(
     linux: bool = False,
     vram: float = 0.0,
     gpu_name: str = "",
+    disk: float = 0.0,
 ) -> HardwareInfo:
     if apple:
         platform, arch = "darwin", "arm64"
@@ -41,6 +42,7 @@ def _hw(
         vram_gb=ram if spark else vram,
         gpu_count=1 if cuda else 0,
         metal_available=apple,
+        disk_free_gb=disk,
         engines=[
             EngineStatus("llama.cpp", True, path="/usr/bin/llama-server"),
             EngineStatus("mlx", apple, detail="test"),
@@ -69,6 +71,75 @@ def test_glm_rejected_on_48gb_mac() -> None:
     assert all(c.rejected for c in result.candidates)
 
 
+def test_glm_mmap_is_explicit_and_experimental_on_32gb_mac() -> None:
+    catalog = load_catalog()
+    hw = _hw(ram=32, apple=True, disk=300)
+    result = plan_model(
+        catalog,
+        hw,
+        "glm-5.2",
+        profile="coding",
+        include_opt_in=True,
+        context_override=4096,
+        memory_mode="mmap",
+        allow_oversize=True,
+    )
+    assert result.selected is not None
+    assert result.selected.experimental
+    assert result.selected.memory_mode == "mmap"
+    assert not result.selected.estimate.fits
+    args = result.selected.variant["engine_args"]
+    assert args["n_gpu_layers"] == 0
+    assert args["mmap"] is True
+    assert args["mlock"] is False
+    assert args["cpu_moe"] is True
+
+
+def test_glm_mmap_rejects_insufficient_disk() -> None:
+    catalog = load_catalog()
+    hw = _hw(ram=32, apple=True, disk=100)
+    result = plan_model(
+        catalog,
+        hw,
+        "glm-5.2",
+        context_override=4096,
+        memory_mode="mmap",
+        allow_oversize=True,
+    )
+    assert result.selected is None
+    assert any("free disk" in c.reject_reason for c in result.candidates)
+
+
+def test_glm_resident_fits_256gb_unified_memory() -> None:
+    catalog = load_catalog()
+    result = plan_model(
+        catalog,
+        _hw(ram=256, apple=True, disk=600),
+        "glm-5.2",
+        context_override=4096,
+        include_opt_in=True,
+    )
+    assert result.selected is not None
+    assert result.selected.memory_mode == "resident"
+    assert not result.selected.experimental
+    assert result.selected.variant["engine_args"]["mlock"] is False
+
+
+def test_glm_hybrid_uses_ram_and_vram() -> None:
+    catalog = load_catalog()
+    result = plan_model(
+        catalog,
+        _hw(ram=256, vram=24, disk=600),
+        "glm-5.2",
+        context_override=4096,
+        include_opt_in=True,
+    )
+    assert result.selected is not None
+    assert result.selected.memory_mode == "hybrid"
+    assert result.selected.variant["engine_args"]["cpu_moe"] is True
+    assert result.selected.variant["engine_args"]["n_gpu_layers"] == "auto"
+
+
 def test_auto_coding_picks_qwen_on_48gb_mac() -> None:
     catalog = load_catalog()
     hw = _hw(ram=48, apple=True)
@@ -95,24 +166,26 @@ def test_cuda_24_matches_vram_target() -> None:
     assert result.target_id == "cuda-24"
     assert result.selected is not None
     assert result.selected.engine == "llama.cpp"
-    # Fit against VRAM, not system RAM
-    assert result.selected.estimate.available_gb == 24.0
+    assert result.selected.memory_mode in {"resident", "hybrid"}
+    if result.selected.memory_mode == "hybrid":
+        assert result.selected.estimate.available_gb == 88.0
+        assert result.selected.variant["engine_args"]["n_gpu_layers"] == "auto"
+    else:
+        assert result.selected.estimate.available_gb == 24.0
 
 
-def test_cuda_8_rejects_large_models() -> None:
+def test_cuda_8_uses_hybrid_for_large_gguf_when_ram_suffices() -> None:
     catalog = load_catalog()
     hw = _hw(ram=32, vram=8.0, gpu_name="NVIDIA GeForce RTX 4060")
     result = plan_model(catalog, hw, "qwen3.6-35b-a3b", profile="coding", include_opt_in=True)
     assert result.target_id == "cuda-8"
-    assert result.selected is None or result.selected.estimate.fits
-    # 35B-A3B Q4 (~20GB) should not fit 8GB
-    if result.selected:
-        assert result.selected.weight_gb < 10
-    else:
-        assert any(c.rejected for c in result.candidates)
+    assert result.selected is not None
+    assert result.selected.memory_mode == "hybrid"
+    assert result.selected.estimate.fits
+    assert result.selected.variant["engine_args"]["n_gpu_layers"] == "auto"
 
 
-def test_cuda_8_auto_selects_small_coder() -> None:
+def test_cuda_8_auto_can_select_higher_priority_hybrid_model() -> None:
     catalog = load_catalog()
     hw = _hw(ram=32, vram=8.0, gpu_name="NVIDIA GeForce RTX 4060")
 
@@ -120,7 +193,8 @@ def test_cuda_8_auto_selects_small_coder() -> None:
 
     assert result.target_id == "cuda-8"
     assert result.selected is not None
-    assert result.selected.model_id == "qwen2.5-coder-3b"
+    assert result.selected.model_id == "qwen3.6-35b-a3b"
+    assert result.selected.memory_mode == "hybrid"
     assert result.selected.estimate.fits
 
 

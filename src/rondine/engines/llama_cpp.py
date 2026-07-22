@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -76,6 +77,45 @@ class LlamaCppAdapter(EngineAdapter):
             return str(local2)
         return "llama-server"
 
+    def _validate_option_support(self, bin_path: str, args: dict[str, Any]) -> None:
+        """Fail early when an installed llama-server lacks requested advanced flags."""
+        resolved = bin_path if Path(bin_path).is_file() else which(bin_path)
+        if not resolved:
+            return
+        requested = {
+            "mmap": "--mmap",
+            "fit": "--fit",
+            "fit_target": "--fit-target",
+            "fit_ctx": "--fit-ctx",
+            "cpu_moe": "--cpu-moe",
+            "n_cpu_moe": "--n-cpu-moe",
+            "override_tensor": "--override-tensor",
+            "split_mode": "--split-mode",
+            "tensor_split": "--tensor-split",
+            "main_gpu": "--main-gpu",
+        }
+        needed = [flag for key, flag in requested.items() if key in args]
+        if not needed:
+            return
+        try:
+            proc = subprocess.run(
+                [resolved, "--help"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return
+        help_text = (proc.stdout or "") + (proc.stderr or "")
+        missing = [flag for flag in needed if flag not in help_text]
+        if missing:
+            raise RuntimeError(
+                "installed llama-server lacks required option(s): "
+                + ", ".join(missing)
+                + "; update llama.cpp"
+            )
+
     def model_dir(self, repo: str) -> Path:
         safe = repo.replace("/", "__")
         path = models_dir() / "gguf" / safe
@@ -87,6 +127,19 @@ class LlamaCppAdapter(EngineAdapter):
         repo = selected["repo"]
         include = (selected.get("variant") or {}).get("include") or [f"*{selected['quant']}*"]
         dest = self.model_dir(repo)
+        if not dry_run:
+            existing = sum(p.stat().st_size for p in dest.rglob("*") if p.is_file())
+            required_gb = float(
+                (selected.get("estimate") or {}).get("disk_required_gb")
+                or float(selected.get("weight_gb") or 0.0) * 1.05
+            )
+            remaining = max(0.0, required_gb - existing / (1024**3))
+            free_gb = shutil.disk_usage(dest).free / (1024**3)
+            if remaining > free_gb:
+                raise RuntimeError(
+                    f"insufficient disk space: need ~{remaining:.1f}GB more, "
+                    f"have {free_gb:.1f}GB free"
+                )
         cmds: list[str] = []
         for pattern in include:
             cmd = [
@@ -186,11 +239,17 @@ class LlamaCppAdapter(EngineAdapter):
             notes.append("MTP speculative decoding enabled")
 
         args = selected_engine_args(plan)
+        self._validate_option_support(bin_path, args)
         ngl = args.get("n_gpu_layers")
         if ngl is None and (platform.system().lower() == "darwin" or which("nvidia-smi")):
             ngl = 99
         if ngl is not None:
-            argv += ["-ngl", str(int(ngl))]
+            if not (
+                isinstance(ngl, int)
+                or (isinstance(ngl, str) and (ngl in {"auto", "all"} or ngl.isdigit()))
+            ):
+                raise ValueError("n_gpu_layers must be an integer, 'auto', or 'all'")
+            argv += ["-ngl", str(ngl)]
 
         if args.get("flash_attn"):
             append_flag(argv, "--flash-attn", "on")
@@ -198,6 +257,29 @@ class LlamaCppAdapter(EngineAdapter):
             append_flag(argv, "--cont-batching")
         if args.get("mlock"):
             append_flag(argv, "--mlock")
+        if "mmap" in args:
+            append_flag(argv, "--mmap" if args["mmap"] else "--no-mmap")
+        if "fit" in args:
+            append_flag(argv, "--fit", "on" if args["fit"] else "off")
+        if "fit_target" in args:
+            append_flag(argv, "--fit-target", int(args["fit_target"]))
+        if "fit_ctx" in args:
+            append_flag(argv, "--fit-ctx", int(args["fit_ctx"]))
+        if args.get("cpu_moe"):
+            append_flag(argv, "--cpu-moe")
+        if "n_cpu_moe" in args:
+            append_flag(argv, "--n-cpu-moe", int(args["n_cpu_moe"]))
+        if args.get("override_tensor"):
+            append_flag(argv, "--override-tensor", args["override_tensor"])
+        if args.get("split_mode"):
+            append_flag(argv, "--split-mode", args["split_mode"])
+        if args.get("tensor_split"):
+            value = args["tensor_split"]
+            if isinstance(value, (list, tuple)):
+                value = ",".join(str(x) for x in value)
+            append_flag(argv, "--tensor-split", value)
+        if "main_gpu" in args:
+            append_flag(argv, "--main-gpu", int(args["main_gpu"]))
         prio = int(args.get("prio") or 0)
         if prio > 0:
             append_flag(argv, "--prio", prio)

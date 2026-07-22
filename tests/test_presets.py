@@ -39,3 +39,29 @@ def test_preset_roundtrip(tmp_path, monkeypatch) -> None:  # type: ignore[no-unt
     assert any(p.name == "coding" for p in list_presets())
     delete_preset("coding")
     assert list_presets() == []
+
+
+def test_preset_preserves_experimental_memory_strategy(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
+    selected = {
+        "model_id": "glm-5.2",
+        "engine": "llama.cpp",
+        "memory_mode": "mmap",
+        "experimental": True,
+        "warnings": ["SSD demand paging"],
+        "engine_args": {"mmap": True, "n_gpu_layers": 0},
+    }
+    save_preset(
+        preset_from_selected(
+            "glm-ssd",
+            selected,
+            profile="coding",
+            host="127.0.0.1",
+            port=8080,
+        )
+    )
+    loaded = load_preset("glm-ssd")
+    resolved = selected_with_preset_overrides(loaded)
+    assert resolved["memory_mode"] == "mmap"
+    assert resolved["experimental"] is True
+    assert resolved["engine_args"]["n_gpu_layers"] == 0

@@ -106,15 +106,76 @@ def _save_hub_plan(selected: dict[str, Any], profile: str) -> Path:
 
 
 def _apply_hub_hardware_budget(
-    selected: dict[str, Any], catalog: Any, hw: Any
+    selected: dict[str, Any],
+    catalog: Any,
+    hw: Any,
+    *,
+    memory_mode: str = "auto",
+    allow_oversize: bool = False,
 ) -> tuple[float, str]:
-    """Recalculate a Hub plan against VRAM on discrete CUDA hosts."""
+    """Recalculate a Hub plan and apply an explicit memory strategy."""
+    if memory_mode == "mmap" and not allow_oversize:
+        raise click.ClickException("--memory-mode mmap requires --allow-oversize")
     available_gb, reserve_gb = available_memory_gb(catalog, hw)
     estimate = selected["estimate"]
     weight_gb = float(estimate["weight_gb"])
     activation_gb = float(estimate["activation_gb"])
     kv_gb = float(estimate.get("kv_gb") or 0.0)
     total_gb = round(weight_gb + activation_gb + kv_gb + reserve_gb, 2)
+    resident_fits = available_gb >= total_gb
+    mode = "resident"
+    if (
+        memory_mode == "hybrid"
+        or (
+            memory_mode == "auto"
+            and not resident_fits
+            and hw.is_discrete_cuda
+            and selected.get("engine") == "llama.cpp"
+            and selected.get("format") == "gguf"
+        )
+    ):
+        if (
+            not hw.is_discrete_cuda
+            or selected.get("engine") != "llama.cpp"
+            or selected.get("format") != "gguf"
+        ):
+            raise click.ClickException(
+                "hybrid mode requires llama.cpp GGUF on a discrete CUDA host"
+            )
+        mode = "hybrid"
+        available_gb = hw.ram_gb + hw.vram_gb
+        reserve_gb = catalog.policy.os_reserve_gb + catalog.policy.vram_reserve_gb
+        total_gb = round(weight_gb + activation_gb + kv_gb + reserve_gb, 2)
+        selected["engine_args"] = {
+            **dict(selected.get("engine_args") or {}),
+            "n_gpu_layers": "auto",
+            "fit": True,
+            "fit_target": 1536,
+            "mmap": True,
+            "mlock": False,
+        }
+    elif memory_mode == "mmap":
+        if selected.get("engine") != "llama.cpp" or selected.get("format") != "gguf":
+            raise click.ClickException("mmap mode requires a llama.cpp GGUF repo")
+        mode = "mmap"
+        selected["experimental"] = True
+        selected["warnings"] = [
+            "experimental SSD demand paging; likely unusably slow and not a supported fit"
+        ]
+        selected["engine_args"] = {
+            **dict(selected.get("engine_args") or {}),
+            "n_gpu_layers": 0 if hw.is_apple_silicon else "auto",
+            "fit": not hw.is_apple_silicon,
+            "fit_target": 2048,
+            "mmap": True,
+            "mlock": False,
+            "parallel": 1,
+            "batch_size": 128,
+            "ubatch_size": 64,
+            "cache_type_k": "q4_1",
+            "cache_type_v": "q4_1",
+        }
+    disk_required = round(weight_gb * 1.05, 2)
     estimate.update(
         {
             "os_reserve_gb": round(reserve_gb, 2),
@@ -122,9 +183,22 @@ def _apply_hub_hardware_budget(
             "available_gb": available_gb,
             "headroom_gb": round(available_gb - total_gb, 2),
             "fits": available_gb >= total_gb,
+            "memory_mode": mode,
+            "experimental": mode == "mmap",
+            "resident_shortfall_gb": round(max(0.0, total_gb - available_gb), 2),
+            "disk_required_gb": disk_required,
+            "disk_available_gb": hw.disk_free_gb,
         }
     )
+    selected["memory_mode"] = mode
+    if mode == "mmap" and hw.disk_free_gb < disk_required:
+        raise click.ClickException(
+            f"insufficient disk: need ~{disk_required:.0f}GB free, "
+            f"have {hw.disk_free_gb:.0f}GB"
+        )
     unit = "VRAM" if hw.is_discrete_cuda else "RAM"
+    if mode == "hybrid":
+        unit = "combined RAM+VRAM"
     return total_gb, unit
 
 
@@ -134,6 +208,8 @@ def _plan_from_hub(
     profile: str,
     context: int | None,
     quant: str | None,
+    memory_mode: str = "auto",
+    allow_oversize: bool = False,
 ) -> dict[str, Any]:
     catalog = load_catalog()
     hw = detect_hardware()
@@ -159,7 +235,13 @@ def _plan_from_hub(
     ctx = int(context or settings.get("context", 32768))
     sampling = {k: v for k, v in settings.items() if k not in {"context", "description"}}
     selected = inspected.to_plan_selected(profile=profile, context=ctx, sampling=sampling)
-    total, unit = _apply_hub_hardware_budget(selected, catalog, hw)
+    total, unit = _apply_hub_hardware_budget(
+        selected,
+        catalog,
+        hw,
+        memory_mode=memory_mode,
+        allow_oversize=allow_oversize,
+    )
     if not selected["estimate"]["fits"]:
         click.echo(
             f"warning: Hub model needs ~{total:.0f}GB {unit}, "
@@ -177,13 +259,22 @@ def _resolve_model_arg(
     context: int | None = None,
     quant: str | None = None,
     require_fit: bool = False,
+    memory_mode: str = "auto",
+    allow_oversize: bool = False,
 ) -> dict[str, Any]:
     """Resolve curated id or org/name Hub repo into a selected plan dict."""
     catalog = load_catalog()
     hw = detect_hardware()
     if model and _is_hf_repo(model):
-        selected = _plan_from_hub(model, profile=profile, context=context, quant=quant)
-        if require_fit and not selected["estimate"]["fits"]:
+        selected = _plan_from_hub(
+            model,
+            profile=profile,
+            context=context,
+            quant=quant,
+            memory_mode=memory_mode,
+            allow_oversize=allow_oversize,
+        )
+        if require_fit and not selected["estimate"]["fits"] and not selected.get("experimental"):
             raise click.ClickException(
                 f"Hub model does not fit (~{selected['estimate']['total_gb']}GB needed)"
             )
@@ -196,6 +287,8 @@ def _resolve_model_arg(
             profile=profile,
             include_opt_in=True,
             context_override=context,
+            memory_mode=memory_mode,
+            allow_oversize=allow_oversize,
         )
         if result.selected is None:
             raise click.ClickException(
@@ -267,6 +360,7 @@ def doctor() -> None:
     click.echo(f"platform: {hw.platform}/{hw.arch}")
     click.echo(f"cpu: {hw.cpu_brand or '(unknown)'}")
     click.echo(f"ram: {hw.ram_gb} GB")
+    click.echo(f"disk free: {hw.disk_free_gb} GB / {hw.disk_total_gb} GB")
     click.echo(f"apple silicon: {hw.is_apple_silicon}")
     click.echo(f"dgx spark: {hw.is_spark}")
     if hw.cuda_available:
@@ -295,18 +389,38 @@ def doctor() -> None:
 
 
 @main.command()
-@click.option("--profile", default="coding", show_default=True)
+@click.option(
+    "--profile",
+    type=click.Choice(["coding", "chat"]),
+    default="coding",
+    show_default=True,
+    help="Workload preset: coding uses 32K context; chat uses 16K and more parallel slots.",
+)
 @click.option("--limit", default=5, show_default=True, help="How many model configs to show.")
-@click.option("--opt-in/--no-opt-in", default=False, help="Include large opt-in models.")
-@click.option("--json", "as_json", is_flag=True)
+@click.option(
+    "--opt-in/--no-opt-in",
+    default=False,
+    help="Include oversized or specialist models excluded from normal recommendations.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Print the complete suggestion result as JSON for scripts.",
+)
 @click.option(
     "--configure",
     "configure_rank",
     type=int,
     default=None,
-    help="Save plan (+ optional preset) for suggestion #N.",
+    help="Save suggestion rank N as the active plan.",
 )
-@click.option("--save-as", default=None, help="With --configure, also save a named preset.")
+@click.option(
+    "--save-as",
+    default=None,
+    metavar="NAME",
+    help="With --configure, also save a reusable named preset.",
+)
 def suggest(
     profile: str,
     limit: int,
@@ -528,6 +642,17 @@ def inspect(repo: str, quant: str | None, as_json: bool) -> None:
 @click.option("--context", type=int, default=None, help="Override context length.")
 @click.option("--quant", default=None, help="Prefer Hub quant when model is org/name.")
 @click.option("--opt-in/--no-opt-in", default=False)
+@click.option(
+    "--memory-mode",
+    type=click.Choice(["auto", "resident", "hybrid", "mmap"]),
+    default="auto",
+    show_default=True,
+)
+@click.option(
+    "--allow-oversize",
+    is_flag=True,
+    help="Acknowledge experimental SSD paging for --memory-mode mmap.",
+)
 @click.option("--save-as", default=None, help="Also save a named preset from this plan.")
 @click.option("--json", "as_json", is_flag=True)
 def plan(
@@ -536,15 +661,26 @@ def plan(
     context: int | None,
     quant: str | None,
     opt_in: bool,
+    memory_mode: str,
+    allow_oversize: bool,
     save_as: str | None,
     as_json: bool,
 ) -> None:
     """Recommend engine / format / quant (catalog id, auto, or Hub org/name)."""
+    if memory_mode == "mmap" and not allow_oversize:
+        raise click.ClickException("--memory-mode mmap requires --allow-oversize")
     catalog = load_catalog()
     hw = detect_hardware()
 
     if _is_hf_repo(model):
-        selected = _plan_from_hub(model, profile=profile, context=context, quant=quant)
+        selected = _plan_from_hub(
+            model,
+            profile=profile,
+            context=context,
+            quant=quant,
+            memory_mode=memory_mode,
+            allow_oversize=allow_oversize,
+        )
         _maybe_save_preset(
             save_as,
             selected,
@@ -580,6 +716,8 @@ def plan(
         profile=profile,
         include_opt_in=opt_in or model != "auto",
         context_override=context,
+        memory_mode=memory_mode,
+        allow_oversize=allow_oversize,
     )
     path = save_plan(result)
     if as_json:
@@ -628,11 +766,17 @@ def plan(
     )
     click.echo(f"  repo: {sel.repo}")
     click.echo(f"  context: {sel.context}")
+    click.echo(
+        f"  memory mode: {sel.memory_mode}"
+        + (" (EXPERIMENTAL)" if sel.experimental else "")
+    )
     _print_estimate(asdict(sel.estimate))
     engine_args = (sel.variant or {}).get("engine_args") or {}
     _print_engine_args(engine_args if isinstance(engine_args, dict) else {})
     for reason in sel.reasons:
         click.echo(f"  note: {reason}")
+    for warning in sel.warnings:
+        click.echo(f"  warning: {warning}", err=True)
     click.echo(f"saved plan: {path}")
     payload = asdict(sel)
     payload["engine_args"] = engine_args if isinstance(engine_args, dict) else {}
@@ -673,10 +817,30 @@ def setup(engines: tuple[str, ...], dry_run: bool) -> None:
 @click.argument("model", required=False)
 @click.option("--profile", default="coding", show_default=True)
 @click.option("--quant", default=None, help="Prefer Hub quant when model is org/name.")
+@click.option(
+    "--memory-mode",
+    type=click.Choice(["auto", "resident", "hybrid", "mmap"]),
+    default="auto",
+    show_default=True,
+)
+@click.option("--allow-oversize", is_flag=True)
 @click.option("--dry-run", is_flag=True)
-def pull(model: str | None, profile: str, quant: str | None, dry_run: bool) -> None:
+def pull(
+    model: str | None,
+    profile: str,
+    quant: str | None,
+    memory_mode: str,
+    allow_oversize: bool,
+    dry_run: bool,
+) -> None:
     """Download weights for a catalog id or Hub org/name."""
-    selected = _resolve_model_arg(model, profile=profile, quant=quant)
+    selected = _resolve_model_arg(
+        model,
+        profile=profile,
+        quant=quant,
+        memory_mode=memory_mode,
+        allow_oversize=allow_oversize,
+    )
     adapter = _adapter_for(str(selected["engine"]))
     click.echo(f"pulling {selected['repo']} via {selected['engine']} ...")
     with spinner(f"downloading {selected['repo']}", enabled=not dry_run):
@@ -696,6 +860,13 @@ def pull(model: str | None, profile: str, quant: str | None, dry_run: bool) -> N
 @click.option("--name", default="default", show_default=True, help="Run record name.")
 @click.option("--preset", "preset_name", default=None, help="Serve a saved preset.")
 @click.option("--save-as", default=None, help="Save this launch as a named preset.")
+@click.option(
+    "--memory-mode",
+    type=click.Choice(["auto", "resident", "hybrid", "mmap"]),
+    default="auto",
+    show_default=True,
+)
+@click.option("--allow-oversize", is_flag=True)
 def serve(
     model: str | None,
     profile: str,
@@ -707,6 +878,8 @@ def serve(
     name: str,
     preset_name: str | None,
     save_as: str | None,
+    memory_mode: str,
+    allow_oversize: bool,
 ) -> None:
     """Launch an OpenAI-compatible local server (catalog id, Hub org/name, or preset)."""
     catalog = load_catalog()
@@ -721,13 +894,23 @@ def serve(
         target_id = preset.target_id
     else:
         selected = _resolve_model_arg(
-            model, profile=profile, quant=quant, require_fit=bool(model)
+            model,
+            profile=profile,
+            quant=quant,
+            require_fit=bool(model),
+            memory_mode=memory_mode,
+            allow_oversize=allow_oversize,
         )
         plan_data = load_plan()
         target_id = (plan_data or {}).get("target_id")
     host = host or catalog.policy.default_host
     port = port or catalog.policy.default_port
     adapter = _adapter_for(str(selected["engine"]))
+    if selected.get("experimental"):
+        for warning in selected.get("warnings") or [
+            "experimental oversized launch"
+        ]:
+            click.echo(f"warning: {warning}", err=True)
     spec = adapter.build_serve({"selected": selected}, host=host, port=port)
     click.echo(f"engine: {spec.engine}")
     click.echo(f"command: {spec.command_line()}")
@@ -804,9 +987,11 @@ def preset_list() -> None:
         eng = p.selected.get("engine", "?")
         quant = p.selected.get("quant", "?")
         mid = p.selected.get("model_id") or p.selected.get("display_name") or "?"
+        mode = p.selected.get("memory_mode", "resident")
+        marker = " [EXPERIMENTAL]" if p.selected.get("experimental") else ""
         click.echo(
             f"{p.name:20} {mid:24} {eng}/{quant}  "
-            f"{p.host}:{p.port}  profile={p.profile}"
+            f"{p.host}:{p.port}  profile={p.profile} mode={mode}{marker}"
         )
 
 
@@ -876,6 +1061,8 @@ def preset_serve(name: str, dry_run: bool, foreground: bool) -> None:
         name="default",
         preset_name=name,
         save_as=None,
+        memory_mode="auto",
+        allow_oversize=False,
     )
 
 

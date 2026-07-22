@@ -42,6 +42,11 @@ class FitEstimate:
     available_gb: float
     fits: bool
     headroom_gb: float
+    memory_mode: str = "resident"
+    experimental: bool = False
+    resident_shortfall_gb: float = 0.0
+    disk_required_gb: float = 0.0
+    disk_available_gb: float = 0.0
 
 
 @dataclass
@@ -62,6 +67,9 @@ class PlanCandidate:
     reject_reason: str = ""
     variant: dict[str, Any] = field(default_factory=dict)
     sampling: dict[str, Any] = field(default_factory=dict)
+    memory_mode: str = "resident"
+    experimental: bool = False
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -99,9 +107,9 @@ def estimate_memory(
     os_reserve = float(reserve_gb if reserve_gb is not None else catalog.policy.os_reserve_gb)
     base = weight + activation + os_reserve
     if variant.min_ram_gb is not None:
-        # Vendor min_ram already covers a short context; only charge extra tokens.
+        # Vendor minimum already includes weights, runtime overhead, and a short context.
         kv_extra = max(0, context - baseline) * active_b * coeff
-        total = max(float(variant.min_ram_gb) + kv_extra, base + kv_extra)
+        total = float(variant.min_ram_gb) + kv_extra
     else:
         total = base + kv
     headroom = available_gb - total
@@ -114,7 +122,22 @@ def estimate_memory(
         available_gb=round(available_gb, 2),
         fits=headroom >= 0,
         headroom_gb=round(headroom, 2),
+        resident_shortfall_gb=round(max(0.0, -headroom), 2),
     )
+
+
+def _with_memory_mode(
+    estimate: FitEstimate,
+    *,
+    mode: str,
+    disk_available_gb: float,
+    experimental: bool = False,
+) -> FitEstimate:
+    estimate.memory_mode = mode
+    estimate.experimental = experimental
+    estimate.disk_required_gb = round(estimate.weight_gb * 1.05, 2)
+    estimate.disk_available_gb = round(disk_available_gb, 2)
+    return estimate
 
 
 def engine_order(catalog: Catalog, hw: HardwareInfo) -> list[str]:
@@ -247,7 +270,13 @@ def plan_model(
     profile: str = "coding",
     include_opt_in: bool = False,
     context_override: int | None = None,
+    memory_mode: str = "auto",
+    allow_oversize: bool = False,
 ) -> PlanResult:
+    if memory_mode not in {"auto", "resident", "hybrid", "mmap"}:
+        raise ValueError(f"unknown memory mode {memory_mode!r}")
+    if memory_mode == "mmap" and not allow_oversize:
+        raise ValueError("mmap memory mode requires allow_oversize=True")
     prefer_coding = profile == "coding"
     order = engine_order(catalog, hw)
     target_id = match_target(catalog, hw)
@@ -277,9 +306,66 @@ def plan_model(
         context = min(context, model.max_context)
         for variant in model.variants:
             ok, reason = engine_usable(hw, variant.engine)
-            estimate = estimate_memory(
+            resident = estimate_memory(
                 catalog, model, variant, context, avail_gb, reserve_gb=reserve_gb
             )
+            estimate = _with_memory_mode(
+                resident,
+                mode="resident",
+                disk_available_gb=hw.disk_free_gb,
+            )
+            chosen_mode = "resident"
+            experimental = False
+            strategy_warning = ""
+
+            hybrid_eligible = (
+                hw.is_discrete_cuda
+                and variant.engine == "llama.cpp"
+                and variant.format == "gguf"
+            )
+            mmap_eligible = variant.engine == "llama.cpp" and variant.format == "gguf"
+            if memory_mode == "hybrid" and not hybrid_eligible:
+                ok = False
+                reason = "hybrid mode requires llama.cpp GGUF on a discrete CUDA host"
+            elif memory_mode == "mmap" and not mmap_eligible:
+                ok = False
+                reason = "mmap mode requires a llama.cpp GGUF variant"
+            elif hybrid_eligible and (
+                memory_mode == "hybrid" or (memory_mode == "auto" and not estimate.fits)
+            ):
+                combined = hw.ram_gb + hw.vram_gb
+                hybrid_reserve = catalog.policy.os_reserve_gb + catalog.policy.vram_reserve_gb
+                estimate = estimate_memory(
+                    catalog,
+                    model,
+                    variant,
+                    context,
+                    combined,
+                    reserve_gb=hybrid_reserve,
+                )
+                estimate = _with_memory_mode(
+                    estimate,
+                    mode="hybrid",
+                    disk_available_gb=hw.disk_free_gb,
+                )
+                chosen_mode = "hybrid"
+                strategy_warning = (
+                    "hybrid estimate uses combined RAM+VRAM; actual placement is "
+                    "managed by llama.cpp"
+                )
+            elif memory_mode == "mmap":
+                estimate = _with_memory_mode(
+                    estimate,
+                    mode="mmap",
+                    disk_available_gb=hw.disk_free_gb,
+                    experimental=True,
+                )
+                chosen_mode = "mmap"
+                experimental = True
+                strategy_warning = (
+                    "experimental SSD demand paging; likely unusably slow and not a "
+                    "supported memory fit"
+                )
             sampling = {
                 k: v
                 for k, v in settings.items()
@@ -291,6 +377,51 @@ def plan_model(
                 profile=profile,
                 target_template=template_layer,
             )
+            if (
+                chosen_mode == "resident"
+                and estimate.fits
+                and estimate.headroom_gb < 16
+                and variant.engine == "llama.cpp"
+            ):
+                engine_args.update(
+                    {
+                        "mlock": False,
+                        "parallel": 1,
+                        "batch_size": 512,
+                        "ubatch_size": 256,
+                        "cache_type_k": "q4_1",
+                        "cache_type_v": "q4_1",
+                    }
+                )
+            if chosen_mode == "hybrid":
+                engine_args.update(
+                    {
+                        "n_gpu_layers": "auto",
+                        "fit": True,
+                        "fit_target": 1536,
+                        "mmap": True,
+                        "mlock": False,
+                    }
+                )
+                if model.moe:
+                    engine_args["cpu_moe"] = True
+            elif chosen_mode == "mmap":
+                engine_args.update(
+                    {
+                        "n_gpu_layers": 0 if hw.is_apple_silicon else "auto",
+                        "fit": not hw.is_apple_silicon,
+                        "fit_target": 2048,
+                        "mmap": True,
+                        "mlock": False,
+                        "parallel": 1,
+                        "batch_size": 128,
+                        "ubatch_size": 64,
+                        "cache_type_k": "q4_1",
+                        "cache_type_v": "q4_1",
+                    }
+                )
+                if model.moe:
+                    engine_args["cpu_moe"] = True
             cand = PlanCandidate(
                 model_id=model.id,
                 display_name=model.display_name,
@@ -315,13 +446,25 @@ def plan_model(
                     "engine_args": engine_args,
                 },
                 sampling=sampling,
+                memory_mode=chosen_mode,
+                experimental=experimental,
             )
+            if strategy_warning:
+                cand.warnings.append(strategy_warning)
             if not ok:
                 cand.rejected = True
                 cand.reject_reason = reason
                 cand.score = -1e6
                 cand.reasons.append(reason)
-            elif not estimate.fits:
+            elif chosen_mode == "mmap" and hw.disk_free_gb < estimate.disk_required_gb:
+                cand.rejected = True
+                cand.reject_reason = (
+                    f"needs ~{estimate.disk_required_gb:.0f}GB free disk, "
+                    f"have {hw.disk_free_gb:.0f}GB"
+                )
+                cand.score = -1e6
+                cand.reasons.append(cand.reject_reason)
+            elif not estimate.fits and chosen_mode != "mmap":
                 unit = "VRAM" if hw.is_discrete_cuda else "RAM"
                 cand.rejected = True
                 cand.reject_reason = (
@@ -331,22 +474,37 @@ def plan_model(
                 cand.score = -1e6
                 cand.reasons.append(cand.reject_reason)
             else:
-                cand.score = _score_candidate(
-                    model,
-                    variant,
-                    estimate,
-                    profile,
-                    order,
-                    prefer_coding,
-                    preferred_engine=preferred_engine,
-                )
+                if chosen_mode == "mmap":
+                    cand.score = -100000.0 - variant.weight_gb
+                    cand.reasons.extend(cand.warnings)
+                    cand.reasons.append(
+                        f"resident shortfall {estimate.resident_shortfall_gb:.0f}GB; "
+                        f"disk requirement {estimate.disk_required_gb:.0f}GB"
+                    )
+                else:
+                    cand.score = _score_candidate(
+                        model,
+                        variant,
+                        estimate,
+                        profile,
+                        order,
+                        prefer_coding,
+                        preferred_engine=preferred_engine,
+                    )
                 cand.reasons.append(f"engine preference order: {order}")
                 if preferred_engine:
                     cand.reasons.append(f"target preferred engine: {preferred_engine}")
                 if hw.is_discrete_cuda:
-                    cand.reasons.append(
-                        f"fit against GPU VRAM {avail_gb:.0f}GB ({hw.gpu_name or 'CUDA'})"
-                    )
+                    if chosen_mode == "hybrid":
+                        cand.reasons.append(
+                            f"hybrid fit against {hw.ram_gb:.0f}GB RAM + "
+                            f"{hw.vram_gb:.0f}GB VRAM"
+                        )
+                    else:
+                        cand.reasons.append(
+                            f"fit against GPU VRAM {avail_gb:.0f}GB "
+                            f"({hw.gpu_name or 'CUDA'})"
+                        )
                 cand.reasons.append(
                     f"est {estimate.total_gb:.0f}GB "
                     f"(weights {estimate.weight_gb:.0f} + kv {estimate.kv_gb:.1f} "
@@ -371,6 +529,8 @@ def plan_model(
         "cuda_available": hw.cuda_available,
         "cuda_capability": hw.cuda_capability,
         "gpu_name": hw.gpu_name,
+        "disk_free_gb": hw.disk_free_gb,
+        "disk_total_gb": hw.disk_total_gb,
     }
     return PlanResult(
         hardware=hw_dict,

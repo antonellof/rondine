@@ -96,12 +96,60 @@ def test_cli_plan_json_saves_preset(tmp_path, monkeypatch) -> None:  # type: ign
     assert (tmp_path / "presets" / "json-plan.json").is_file()
 
 
+def test_cli_plan_mmap_requires_acknowledgement(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "rondine.cli.detect_hardware",
+        lambda: HardwareInfo(
+            platform="darwin",
+            arch="arm64",
+            hostname="test",
+            ram_gb=32.0,
+            is_apple_silicon=True,
+            metal_available=True,
+            disk_free_gb=300.0,
+        ),
+    )
+    runner = CliRunner()
+    refused = runner.invoke(main, ["plan", "glm-5.2", "--memory-mode", "mmap"])
+    assert refused.exit_code != 0
+    assert "requires --allow-oversize" in refused.output
+
+    accepted = runner.invoke(
+        main,
+        [
+            "plan",
+            "glm-5.2",
+            "--memory-mode",
+            "mmap",
+            "--allow-oversize",
+            "--context",
+            "4096",
+            "--json",
+            "--save-as",
+            "glm-ssd",
+        ],
+    )
+    assert accepted.exit_code == 0
+    selected = json.loads(accepted.output)["selected"]
+    assert selected["experimental"] is True
+    assert selected["memory_mode"] == "mmap"
+
+
 def test_cli_suggest(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
     runner = CliRunner()
     result = runner.invoke(main, ["suggest", "--profile", "coding", "--limit", "3"])
     assert result.exit_code == 0
     assert "recommended configs" in result.output.lower() or "no fitting" in result.output.lower()
+
+
+def test_cli_suggest_help_documents_options() -> None:
+    result = CliRunner().invoke(main, ["suggest", "--help"])
+    assert result.exit_code == 0
+    assert "--profile [coding|chat]" in result.output
+    for option in ("--limit", "--opt-in", "--json", "--configure", "--save-as"):
+        assert option in result.output
 
 
 def test_cli_suggest_configure(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

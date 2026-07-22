@@ -602,6 +602,7 @@ active_params = "40B"
 max_context = 1048576
 modalities = ["text"]
 coding_priority = 18
+moe = true
 notes = "Frontier coding MoE; 2-bit needs ~245GB (256GB Mac / multi-node)."
 opt_in = true
 
@@ -612,11 +613,12 @@ provider = "unsloth"
 repo = "unsloth/GLM-5.2-GGUF"
 quant = "UD-IQ2_M"
 include = ["*UD-IQ2_M*"]
-weight_gb = 239.0
+weight_gb = 238.58
 preferred = true
 quality_bonus = 4
 recommended_profiles = ["coding"]
 min_ram_gb = 245.0
+notes = "Recommended dynamic 2-bit tier; six shards, verified at 238.578GB."
 
 [[models.variants]]
 engine = "llama.cpp"
@@ -625,9 +627,49 @@ provider = "unsloth"
 repo = "unsloth/GLM-5.2-GGUF"
 quant = "UD-IQ1_S"
 include = ["*UD-IQ1_S*"]
-weight_gb = 223.0
+weight_gb = 216.72
 recommended_profiles = ["coding"]
 min_ram_gb = 223.0
+notes = "Smallest dynamic 1-bit tier; six shards, verified at 216.715GB."
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+provider = "unsloth"
+repo = "unsloth/GLM-5.2-GGUF"
+quant = "UD-IQ1_M"
+include = ["*UD-IQ1_M*"]
+weight_gb = 228.49
+quality_bonus = 1
+recommended_profiles = ["coding"]
+min_ram_gb = 235.0
+notes = "Higher-quality 1-bit tier; six shards, verified at 228.493GB."
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+provider = "unsloth"
+repo = "unsloth/GLM-5.2-GGUF"
+quant = "UD-Q3_K_M"
+include = ["*UD-Q3_K_M*"]
+weight_gb = 342.74
+quality_bonus = 6
+recommended_profiles = ["coding"]
+min_ram_gb = 350.0
+notes = "Dynamic 3-bit quality tier; nine shards, verified at 342.736GB."
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+provider = "unsloth"
+repo = "unsloth/GLM-5.2-GGUF"
+quant = "UD-Q4_K_M"
+include = ["*UD-Q4_K_M*"]
+weight_gb = 465.83
+quality_bonus = 9
+recommended_profiles = ["coding"]
+min_ram_gb = 475.0
+notes = "Dynamic 4-bit quality tier; eleven shards, verified at 465.826GB."
 
 [[models.variants]]
 engine = "vllm"

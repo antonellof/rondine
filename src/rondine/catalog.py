@@ -41,6 +41,7 @@ class ModelEntry:
     coding_priority: int
     notes: str = ""
     opt_in: bool = False
+    moe: bool = False
     variants: list[ModelVariant] = field(default_factory=list)
 
 
@@ -133,6 +134,7 @@ def _parse_model(raw: dict[str, Any]) -> ModelEntry:
         coding_priority=int(raw.get("coding_priority", 0)),
         notes=str(raw.get("notes", "")),
         opt_in=bool(raw.get("opt_in", False)),
+        moe=bool(raw.get("moe", raw.get("active_params") != raw.get("params"))),
         variants=variants,
     )
 
