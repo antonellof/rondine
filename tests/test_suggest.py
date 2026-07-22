@@ -60,4 +60,19 @@ def test_resolve_engine_args_merges_layers() -> None:
     )
     assert args["n_gpu_layers"] == 99
     assert args["parallel"] == 1  # coding override
-    assert args["cache_type_k"] == "q4_0"  # mac override
+    assert args["cache_type_k"] == "q8_0"
+    assert args["batch_size"] == 2048  # mac override
+    assert args["flash_attn"] is True
+    assert args.get("mlock") is True
+
+    tight = resolve_engine_args(
+        catalog, "llama.cpp", profile="coding", target_template="mac-tight"
+    )
+    assert tight["batch_size"] == 512
+    assert tight["ubatch_size"] == 512
+
+
+def test_mlx_template_enables_fast_synch() -> None:
+    catalog = load_catalog()
+    args = resolve_engine_args(catalog, "mlx", profile="coding", target_template="mac")
+    assert args.get("metal_fast_synch") is True

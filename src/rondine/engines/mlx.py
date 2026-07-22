@@ -94,6 +94,10 @@ class MlxAdapter(EngineAdapter):
             "MLX loads Hugging Face MLX repos; first run downloads weights.",
             f"alias/model id for clients: {alias} (engine may report HF id)",
         ]
+        env = dict(os.environ)
+        if args.get("metal_fast_synch", True):
+            env["MLX_METAL_FAST_SYNCH"] = "1"
+            notes.append("MLX_METAL_FAST_SYNCH=1 (Metal sync throughput)")
         if args.get("trust_remote_code"):
             notes.append("trust_remote_code enabled for Hub config")
         if args:
@@ -115,7 +119,7 @@ class MlxAdapter(EngineAdapter):
         return LaunchSpec(
             engine=self.name,
             argv=argv,
-            env=dict(os.environ),
+            env=env,
             host=host,
             port=port,
             alias=alias,

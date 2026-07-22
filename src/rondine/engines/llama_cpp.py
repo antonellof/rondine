@@ -196,6 +196,11 @@ class LlamaCppAdapter(EngineAdapter):
             append_flag(argv, "--flash-attn", "on")
         if args.get("cont_batching", True):
             append_flag(argv, "--cont-batching")
+        if args.get("mlock"):
+            append_flag(argv, "--mlock")
+        prio = int(args.get("prio") or 0)
+        if prio > 0:
+            append_flag(argv, "--prio", prio)
         if "parallel" in args:
             append_flag(argv, "--parallel", int(args["parallel"]))
         if "batch_size" in args:

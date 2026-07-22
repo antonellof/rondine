@@ -100,7 +100,7 @@ Point any OpenAI-compatible coding client at:
 http://127.0.0.1:8080/v1
 ```
 
-See [docs/coding.md](docs/coding.md).
+See [docs/coding.md](docs/coding.md) and [docs/engine-tuning.md](docs/engine-tuning.md).
 
 ## Cluster notes (0.2)
 
