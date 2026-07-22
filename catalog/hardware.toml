@@ -1,0 +1,99 @@
+# Hardware presets and planner headroom policy.
+
+[catalog]
+version = 1
+
+[policy]
+# Keep OS / driver / desktop responsive.
+os_reserve_gb = 8.0
+# Extra fraction of weight size reserved for activations / fragmentation.
+activation_margin = 0.12
+# Approximate KV-cache GB per token per billion active params (assumes KV quant / GQA).
+kv_bytes_per_token_per_b = 0.000006
+# Context already budgeted inside vendor min_ram_gb figures.
+min_ram_baseline_context = 4096
+# Default preferred engines by platform (first available wins for ranking).
+apple_engine_order = ["mlx", "llama.cpp"]
+spark_engine_order = ["vllm", "llama.cpp"]
+linux_engine_order = ["llama.cpp", "vllm"]
+default_port = 8080
+default_host = "127.0.0.1"
+
+[[targets]]
+id = "mac-24"
+label = "Apple Silicon 24GB"
+platform = "darwin"
+arch = "arm64"
+min_ram_gb = 20
+max_ram_gb = 28
+notes = "Laptop class — Gemma 4 12B / Qwen 27B Q4."
+
+[[targets]]
+id = "mac-36"
+label = "Apple Silicon 36GB"
+platform = "darwin"
+arch = "arm64"
+min_ram_gb = 32
+max_ram_gb = 40
+notes = "Qwen3.6 35B-A3B comfortable."
+
+[[targets]]
+id = "mac-48"
+label = "Apple Silicon 48GB"
+platform = "darwin"
+arch = "arm64"
+min_ram_gb = 40
+max_ram_gb = 64
+notes = "Strong single-Mac coding node."
+
+[[targets]]
+id = "mac-128"
+label = "Apple Silicon 128GB"
+platform = "darwin"
+arch = "arm64"
+min_ram_gb = 96
+max_ram_gb = 160
+notes = "DeepSeek-V4-Flash 3-bit possible."
+
+[[targets]]
+id = "mac-256"
+label = "Apple Silicon 256GB (M3 Ultra class)"
+platform = "darwin"
+arch = "arm64"
+min_ram_gb = 192
+max_ram_gb = 320
+notes = "GLM-5.2 2-bit / large MoE single node."
+
+[[targets]]
+id = "spark-128"
+label = "DGX Spark / GB10 128GB"
+platform = "linux"
+arch = "aarch64"
+min_ram_gb = 100
+max_ram_gb = 140
+cuda_capability_major = 12
+sm = "sm_121"
+preferred_engine = "vllm"
+notes = "Blackwell GB10; prefer NVFP4 via vLLM with flashinfer_b12x."
+
+[[targets]]
+id = "cluster-mac-2x256"
+label = "2× Mac Studio 256GB"
+platform = "darwin"
+arch = "arm64"
+nodes = 2
+min_ram_gb_per_node = 192
+cluster = true
+notes = "MLX JACCL or experimental llama.cpp RPC."
+
+[[targets]]
+id = "cluster-spark-2x128"
+label = "2× DGX Spark 128GB"
+platform = "linux"
+arch = "aarch64"
+nodes = 2
+min_ram_gb_per_node = 100
+cluster = true
+cuda_capability_major = 12
+preferred_engine = "vllm"
+notes = "Ray + NCCL over RoCE required."

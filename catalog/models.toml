@@ -1,0 +1,355 @@
+# Rondine model catalog — reviewed Unsloth / upstream presets.
+# Memory figures are approximate weight sizes (GB). Planner adds OS + KV headroom.
+
+[catalog]
+version = 1
+source = "https://unsloth.ai/docs"
+
+# ---------------------------------------------------------------------------
+# Qwen3.6
+# ---------------------------------------------------------------------------
+
+[[models]]
+id = "qwen3.6-27b"
+family = "qwen3.6"
+display_name = "Qwen3.6 27B"
+params = "27B"
+active_params = "27B"
+max_context = 262144
+modalities = ["text", "image"]
+coding_priority = 10
+notes = "Strong dense coding model; runs on ~18GB at 4-bit."
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+repo = "unsloth/Qwen3.6-27B-GGUF"
+quant = "UD-Q4_K_XL"
+include = ["*UD-Q4_K_XL*"]
+weight_gb = 18.0
+mmproj = "*mmproj-F16*"
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+repo = "unsloth/Qwen3.6-27B-MTP-GGUF"
+quant = "UD-Q4_K_XL"
+include = ["*UD-Q4_K_XL*", "*mmproj-F16*"]
+weight_gb = 19.0
+mtp = true
+recommended_profiles = ["coding"]
+
+[[models.variants]]
+engine = "mlx"
+format = "mlx"
+repo = "unsloth/Qwen3.6-27B-UD-MLX-4bit"
+quant = "4bit"
+weight_gb = 26.2
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "vllm"
+format = "nvfp4"
+repo = "unsloth/Qwen3.6-27B-NVFP4"
+quant = "NVFP4"
+weight_gb = 18.0
+spark_moe_backend = "flashinfer_b12x"
+recommended_profiles = ["coding", "chat"]
+
+[[models]]
+id = "qwen3.6-35b-a3b"
+family = "qwen3.6"
+display_name = "Qwen3.6 35B-A3B"
+params = "35B"
+active_params = "3B"
+max_context = 262144
+modalities = ["text", "image"]
+coding_priority = 20
+notes = "MoE coding sweet spot; ~23GB at dynamic 4-bit."
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+repo = "unsloth/Qwen3.6-35B-A3B-GGUF"
+quant = "UD-Q4_K_XL"
+include = ["*UD-Q4_K_XL*", "*mmproj-F16*"]
+weight_gb = 23.0
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+repo = "unsloth/Qwen3.6-35B-A3B-MTP-GGUF"
+quant = "UD-Q4_K_XL"
+include = ["*UD-Q4_K_XL*", "*mmproj-F16*"]
+weight_gb = 24.0
+mtp = true
+recommended_profiles = ["coding"]
+
+[[models.variants]]
+engine = "mlx"
+format = "mlx"
+repo = "unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit"
+quant = "4bit"
+weight_gb = 24.0
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "vllm"
+format = "nvfp4"
+repo = "unsloth/Qwen3.6-35B-A3B-NVFP4-Fast"
+quant = "NVFP4-Fast"
+weight_gb = 24.0
+spark_moe_backend = "flashinfer_b12x"
+recommended_profiles = ["coding", "chat"]
+
+# ---------------------------------------------------------------------------
+# Gemma 4
+# ---------------------------------------------------------------------------
+
+[[models]]
+id = "gemma-4-12b"
+family = "gemma-4"
+display_name = "Gemma 4 12B Unified"
+params = "12B"
+active_params = "12B"
+max_context = 262144
+modalities = ["text", "image", "audio"]
+coding_priority = 5
+notes = "Compact multimodal; good laptop / low-RAM coding fallback."
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+repo = "unsloth/gemma-4-12b-it-GGUF"
+quant = "UD-Q4_K_XL"
+include = ["*UD-Q4_K_XL*"]
+weight_gb = 8.0
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "vllm"
+format = "nvfp4"
+repo = "unsloth/gemma-4-12b-it-NVFP4"
+quant = "NVFP4"
+weight_gb = 11.0
+recommended_profiles = ["coding", "chat"]
+
+[[models]]
+id = "gemma-4-26b-a4b"
+family = "gemma-4"
+display_name = "Gemma 4 26B-A4B"
+params = "26B"
+active_params = "4B"
+max_context = 262144
+modalities = ["text", "image"]
+coding_priority = 8
+notes = "MoE speed/quality tradeoff for local coding."
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+repo = "unsloth/gemma-4-26B-A4B-it-GGUF"
+quant = "UD-Q4_K_XL"
+include = ["*UD-Q4_K_XL*", "*mmproj-BF16*"]
+weight_gb = 18.0
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "mlx"
+format = "mlx"
+repo = "unsloth/gemma-4-26b-a4b-it-UD-MLX-4bit"
+quant = "4bit"
+weight_gb = 18.0
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "vllm"
+format = "nvfp4"
+repo = "unsloth/gemma-4-26B-A4B-it-NVFP4"
+quant = "NVFP4"
+weight_gb = 26.0
+spark_moe_backend = "flashinfer_b12x"
+recommended_profiles = ["coding", "chat"]
+
+[[models]]
+id = "gemma-4-31b"
+family = "gemma-4"
+display_name = "Gemma 4 31B"
+params = "31B"
+active_params = "31B"
+max_context = 262144
+modalities = ["text", "image"]
+coding_priority = 7
+notes = "Strongest Gemma 4 dense model."
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+repo = "unsloth/gemma-4-31B-it-GGUF"
+quant = "UD-Q4_K_XL"
+include = ["*UD-Q4_K_XL*", "*mmproj-BF16*"]
+weight_gb = 20.0
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "mlx"
+format = "mlx"
+repo = "unsloth/gemma-4-31b-it-UD-MLX-4bit"
+quant = "4bit"
+weight_gb = 20.0
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "vllm"
+format = "nvfp4"
+repo = "unsloth/gemma-4-31B-it-NVFP4"
+quant = "NVFP4"
+weight_gb = 32.0
+recommended_profiles = ["coding", "chat"]
+
+# ---------------------------------------------------------------------------
+# DeepSeek-V4-Flash
+# ---------------------------------------------------------------------------
+
+[[models]]
+id = "deepseek-v4-flash"
+family = "deepseek-v4"
+display_name = "DeepSeek-V4-Flash"
+params = "284B"
+active_params = "13B"
+max_context = 1048576
+modalities = ["text"]
+coding_priority = 15
+notes = "Large MoE; needs ~110GB+ for 3-bit. Opt-in on smaller machines."
+opt_in = true
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+repo = "unsloth/DeepSeek-V4-Flash-GGUF"
+quant = "UD-IQ3_XXS"
+include = ["*UD-IQ3_XXS*"]
+weight_gb = 103.0
+recommended_profiles = ["coding", "chat"]
+min_ram_gb = 110.0
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+repo = "unsloth/DeepSeek-V4-Flash-GGUF"
+quant = "UD-Q4_K_XL"
+include = ["*UD-Q4_K_XL*"]
+weight_gb = 155.0
+recommended_profiles = ["coding"]
+min_ram_gb = 162.0
+
+# ---------------------------------------------------------------------------
+# GLM-5.2
+# ---------------------------------------------------------------------------
+
+[[models]]
+id = "glm-5.2"
+family = "glm-5.2"
+display_name = "GLM-5.2"
+params = "744B"
+active_params = "40B"
+max_context = 1048576
+modalities = ["text"]
+coding_priority = 18
+notes = "Frontier coding MoE; 2-bit needs ~245GB (256GB Mac / multi-node)."
+opt_in = true
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+repo = "unsloth/GLM-5.2-GGUF"
+quant = "UD-IQ2_M"
+include = ["*UD-IQ2_M*"]
+weight_gb = 239.0
+recommended_profiles = ["coding"]
+min_ram_gb = 245.0
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+repo = "unsloth/GLM-5.2-GGUF"
+quant = "UD-IQ1_S"
+include = ["*UD-IQ1_S*"]
+weight_gb = 223.0
+recommended_profiles = ["coding"]
+min_ram_gb = 223.0
+
+# ---------------------------------------------------------------------------
+# Profiles — sampling + reasoning defaults
+# ---------------------------------------------------------------------------
+
+[profiles.coding]
+context = 32768
+description = "Practical coding context with model-specific sampling."
+
+[profiles.coding."qwen3.6"]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 0.0
+enable_thinking = true
+reasoning_effort = ""
+chat_template_kwargs = { enable_thinking = true }
+
+[profiles.coding."gemma-4"]
+temperature = 1.0
+top_p = 0.95
+top_k = 64
+enable_thinking = true
+chat_template_kwargs = { enable_thinking = true }
+
+[profiles.coding."deepseek-v4"]
+temperature = 1.0
+top_p = 1.0
+min_p = 0.0
+enable_thinking = true
+reasoning_effort = "high"
+chat_template_kwargs = { reasoning_effort = "high" }
+
+[profiles.coding."glm-5.2"]
+temperature = 1.0
+top_p = 0.95
+min_p = 0.01
+enable_thinking = true
+reasoning_effort = "max"
+chat_template_kwargs = { reasoning_effort = "max" }
+
+[profiles.chat]
+context = 16384
+description = "General chat / lower context."
+
+[profiles.chat."qwen3.6"]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+presence_penalty = 1.5
+enable_thinking = false
+chat_template_kwargs = { enable_thinking = false }
+
+[profiles.chat."gemma-4"]
+temperature = 1.0
+top_p = 0.95
+top_k = 64
+enable_thinking = false
+chat_template_kwargs = { enable_thinking = false }
+
+[profiles.chat."deepseek-v4"]
+temperature = 1.0
+top_p = 1.0
+enable_thinking = false
+chat_template_kwargs = { enable_thinking = false }
+
+[profiles.chat."glm-5.2"]
+temperature = 1.0
+top_p = 0.95
+min_p = 0.01
+enable_thinking = false
+chat_template_kwargs = { enable_thinking = false }

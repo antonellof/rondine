@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync
+        run: uv sync --extra dev
+      - name: Ruff
+        run: uv run ruff check src tests
+      - name: Mypy
+        run: uv run mypy src/rondine
+      - name: Pytest
+        run: uv run pytest -q
+      - name: Dry-run CLI
+        run: |
+          uv run rondine doctor
+          uv run rondine models
+          uv run rondine plan gemma-4-12b --profile coding
+          uv run rondine setup --dry-run
+          uv run rondine serve gemma-4-12b --profile coding --dry-run
