@@ -1,7 +1,8 @@
-# Hardware presets and planner headroom policy.
+# Hardware presets, planner headroom policy, and engine performance templates.
+# Templates feed llama-server / mlx_lm.server / vLLM argv for best local throughput.
 
 [catalog]
-version = 1
+version = 2
 
 [policy]
 # Keep OS / driver / desktop responsive.
@@ -19,6 +20,79 @@ linux_engine_order = ["llama.cpp", "vllm"]
 default_port = 8080
 default_host = "127.0.0.1"
 
+# ---------------------------------------------------------------------------
+# Engine performance templates (merged: defaults → profile → target override)
+# ---------------------------------------------------------------------------
+
+[engines."llama.cpp".defaults]
+n_gpu_layers = 99
+flash_attn = true
+parallel = 2
+batch_size = 512
+ubatch_size = 128
+# 0 = leave thread count to llama.cpp
+threads = 0
+cont_batching = true
+cache_type_k = "q8_0"
+cache_type_v = "q8_0"
+
+[engines."llama.cpp".coding]
+parallel = 1
+batch_size = 512
+ubatch_size = 128
+
+[engines."llama.cpp".chat]
+parallel = 4
+batch_size = 1024
+ubatch_size = 256
+
+[engines."llama.cpp".mac]
+# Unified memory: keep KV a bit leaner on Apple Silicon.
+cache_type_k = "q4_0"
+cache_type_v = "q4_0"
+
+[engines."llama.cpp".spark]
+flash_attn = true
+parallel = 4
+batch_size = 2048
+ubatch_size = 512
+cache_type_k = "f16"
+cache_type_v = "f16"
+
+[engines.mlx.defaults]
+# mlx_lm.server takes few knobs; notes carry sampling to clients.
+trust_remote_code = true
+
+[engines.mlx.coding]
+trust_remote_code = true
+
+[engines.vllm.defaults]
+gpu_memory_utilization = 0.90
+max_model_len = 32768
+enable_prefix_caching = true
+enforce_eager = false
+tensor_parallel_size = 1
+dtype = "auto"
+
+[engines.vllm.coding]
+gpu_memory_utilization = 0.90
+max_model_len = 32768
+enable_prefix_caching = true
+
+[engines.vllm.chat]
+gpu_memory_utilization = 0.88
+max_model_len = 16384
+
+[engines.vllm.spark]
+gpu_memory_utilization = 0.92
+max_model_len = 65536
+enable_prefix_caching = true
+# MoE backend still comes from the model variant (flashinfer_b12x).
+
+# ---------------------------------------------------------------------------
+# Hardware targets (matched by platform + RAM band)
+# ---------------------------------------------------------------------------
+
 [[targets]]
 id = "mac-24"
 label = "Apple Silicon 24GB"
@@ -26,7 +100,10 @@ platform = "darwin"
 arch = "arm64"
 min_ram_gb = 20
 max_ram_gb = 28
-notes = "Laptop class — Gemma 4 12B / Qwen 27B Q4."
+preferred_engine = "mlx"
+suggested_models = ["gemma-4-12b", "qwen3.6-27b"]
+engine_template = "mac"
+notes = "Laptop class — Gemma 4 12B / Qwen 27B at 4-bit."
 
 [[targets]]
 id = "mac-36"
@@ -35,6 +112,9 @@ platform = "darwin"
 arch = "arm64"
 min_ram_gb = 32
 max_ram_gb = 40
+preferred_engine = "mlx"
+suggested_models = ["qwen3.6-35b-a3b", "gemma-4-26b-a4b", "gemma-4-12b"]
+engine_template = "mac"
 notes = "Qwen3.6 35B-A3B comfortable."
 
 [[targets]]
@@ -44,6 +124,9 @@ platform = "darwin"
 arch = "arm64"
 min_ram_gb = 40
 max_ram_gb = 64
+preferred_engine = "mlx"
+suggested_models = ["qwen3.6-35b-a3b", "qwen3.6-27b", "gemma-4-31b"]
+engine_template = "mac"
 notes = "Strong single-Mac coding node."
 
 [[targets]]
@@ -53,6 +136,9 @@ platform = "darwin"
 arch = "arm64"
 min_ram_gb = 96
 max_ram_gb = 160
+preferred_engine = "mlx"
+suggested_models = ["deepseek-v4-flash", "qwen3.6-35b-a3b", "gemma-4-31b"]
+engine_template = "mac"
 notes = "DeepSeek-V4-Flash 3-bit possible."
 
 [[targets]]
@@ -62,6 +148,9 @@ platform = "darwin"
 arch = "arm64"
 min_ram_gb = 192
 max_ram_gb = 320
+preferred_engine = "mlx"
+suggested_models = ["glm-5.2", "deepseek-v4-flash", "qwen3.6-35b-a3b"]
+engine_template = "mac"
 notes = "GLM-5.2 2-bit / large MoE single node."
 
 [[targets]]
@@ -74,6 +163,8 @@ max_ram_gb = 140
 cuda_capability_major = 12
 sm = "sm_121"
 preferred_engine = "vllm"
+suggested_models = ["qwen3.6-35b-a3b", "deepseek-v4-flash", "gemma-4-31b"]
+engine_template = "spark"
 notes = "Blackwell GB10; prefer NVFP4 via vLLM with flashinfer_b12x."
 
 [[targets]]
@@ -84,6 +175,8 @@ arch = "arm64"
 nodes = 2
 min_ram_gb_per_node = 192
 cluster = true
+preferred_engine = "mlx"
+suggested_models = ["glm-5.2", "deepseek-v4-flash"]
 notes = "MLX JACCL or experimental llama.cpp RPC."
 
 [[targets]]
@@ -96,4 +189,5 @@ min_ram_gb_per_node = 100
 cluster = true
 cuda_capability_major = 12
 preferred_engine = "vllm"
+suggested_models = ["glm-5.2", "deepseek-v4-flash"]
 notes = "Ray + NCCL over RoCE required."

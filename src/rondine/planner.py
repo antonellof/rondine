@@ -13,7 +13,9 @@ from rondine.catalog import (
     ModelEntry,
     ModelVariant,
     get_model,
+    get_target,
     profile_settings,
+    resolve_engine_args,
 )
 from rondine.detect import HardwareInfo
 from rondine.paths import plans_dir
@@ -160,6 +162,7 @@ def _score_candidate(
     profile: str,
     order: list[str],
     prefer_coding: bool,
+    preferred_engine: str | None = None,
 ) -> float:
     if not estimate.fits:
         return -1e6
@@ -173,12 +176,31 @@ def _score_candidate(
         score += max(0, 30 - eng_rank * 10)
     except ValueError:
         score -= 5
+    if preferred_engine and variant.engine == preferred_engine:
+        score += 18
     # Prefer more headroom but not oversized waste
     score += min(estimate.headroom_gb, 40) * 0.5
     # Prefer smaller downloads when scores are close
     score -= variant.weight_gb * 0.05
     if variant.mtp and prefer_coding:
         score += 5
+    if variant.preferred:
+        score += 15
+    score += variant.quality_bonus
+    # Mild publisher preference (official / ggml / bartowski / mlx-community)
+    provider_bonus = {
+        "ggml-org": 8,
+        "bartowski": 7,
+        "mlx-community": 7,
+        "Qwen": 6,
+        "google": 6,
+        "deepseek-ai": 6,
+        "zai-org": 5,
+        "mudler": 4,
+        "lmstudio-community": 3,
+        "unsloth": 2,
+    }
+    score += provider_bonus.get(variant.provider, 0)
     return score
 
 
@@ -192,6 +214,11 @@ def plan_model(
 ) -> PlanResult:
     prefer_coding = profile == "coding"
     order = engine_order(catalog, hw)
+    target_id = match_target(catalog, hw)
+    target = get_target(catalog, target_id) if target_id else None
+    preferred_engine = target.preferred_engine if target else None
+    template_layer = target.engine_template if target else None
+
     models: list[ModelEntry]
     if model_id and model_id != "auto":
         models = [get_model(catalog, model_id)]
@@ -217,6 +244,12 @@ def plan_model(
                 for k, v in settings.items()
                 if k not in {"context", "description"}
             }
+            engine_args = resolve_engine_args(
+                catalog,
+                variant.engine,
+                profile=profile,
+                target_template=template_layer,
+            )
             cand = PlanCandidate(
                 model_id=model.id,
                 display_name=model.display_name,
@@ -235,6 +268,10 @@ def plan_model(
                     "mtp": variant.mtp,
                     "spark_moe_backend": variant.spark_moe_backend,
                     "min_ram_gb": variant.min_ram_gb,
+                    "provider": variant.provider,
+                    "preferred": variant.preferred,
+                    "hub": False,
+                    "engine_args": engine_args,
                 },
                 sampling=sampling,
             )
@@ -252,9 +289,17 @@ def plan_model(
                 cand.reasons.append(cand.reject_reason)
             else:
                 cand.score = _score_candidate(
-                    model, variant, estimate, profile, order, prefer_coding
+                    model,
+                    variant,
+                    estimate,
+                    profile,
+                    order,
+                    prefer_coding,
+                    preferred_engine=preferred_engine,
                 )
                 cand.reasons.append(f"engine preference order: {order}")
+                if preferred_engine:
+                    cand.reasons.append(f"target preferred engine: {preferred_engine}")
                 cand.reasons.append(
                     f"est {estimate.total_gb:.0f}GB "
                     f"(weights {estimate.weight_gb:.0f} + kv {estimate.kv_gb:.1f} "
@@ -282,7 +327,7 @@ def plan_model(
         profile=profile,
         selected=selected,
         candidates=candidates,
-        target_id=match_target(catalog, hw),
+        target_id=target_id,
     )
 
 

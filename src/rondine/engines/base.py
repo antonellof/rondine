@@ -30,6 +30,28 @@ class LaunchSpec:
         return " ".join(self.argv)
 
 
+def selected_engine_args(plan: dict[str, Any]) -> dict[str, Any]:
+    """Pull merged engine performance knobs from a plan/selected payload."""
+    selected = plan.get("selected") or plan
+    if isinstance(selected.get("engine_args"), dict):
+        return dict(selected["engine_args"])
+    variant = selected.get("variant") or {}
+    if isinstance(variant.get("engine_args"), dict):
+        return dict(variant["engine_args"])
+    return {}
+
+
+def append_flag(argv: list[str], flag: str, value: Any | None = None) -> None:
+    if value is None:
+        argv.append(flag)
+        return
+    if isinstance(value, bool):
+        if value:
+            argv.append(flag)
+        return
+    argv.extend([flag, str(value)])
+
+
 class EngineAdapter(ABC):
     name: str
 

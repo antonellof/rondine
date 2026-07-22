@@ -23,6 +23,10 @@ class ModelVariant:
     spark_moe_backend: str | None = None
     recommended_profiles: list[str] = field(default_factory=list)
     min_ram_gb: float | None = None
+    provider: str = ""
+    preferred: bool = False
+    quality_bonus: float = 0.0
+    notes: str = ""
 
 
 @dataclass(frozen=True)
@@ -55,6 +59,8 @@ class HardwareTarget:
     cuda_capability_major: int | None = None
     sm: str | None = None
     preferred_engine: str | None = None
+    suggested_models: list[str] = field(default_factory=list)
+    engine_template: str | None = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +82,7 @@ class Catalog:
     targets: list[HardwareTarget]
     policy: PlannerPolicy
     profiles: dict[str, Any]
+    engine_templates: dict[str, dict[str, dict[str, Any]]]
     version: int
 
 
@@ -100,6 +107,10 @@ def _parse_variant(raw: dict[str, Any]) -> ModelVariant:
         spark_moe_backend=raw.get("spark_moe_backend"),
         recommended_profiles=[str(x) for x in raw.get("recommended_profiles", [])],
         min_ram_gb=float(raw["min_ram_gb"]) if "min_ram_gb" in raw else None,
+        provider=str(raw.get("provider") or raw["repo"].split("/")[0]),
+        preferred=bool(raw.get("preferred", False)),
+        quality_bonus=float(raw.get("quality_bonus", 0.0)),
+        notes=str(raw.get("notes", "")),
     )
 
 
@@ -121,6 +132,9 @@ def _parse_model(raw: dict[str, Any]) -> ModelEntry:
 
 
 def _parse_target(raw: dict[str, Any]) -> HardwareTarget:
+    suggested = raw.get("suggested_models") or []
+    if isinstance(suggested, str):
+        suggested = [suggested]
     return HardwareTarget(
         id=str(raw["id"]),
         label=str(raw["label"]),
@@ -139,7 +153,45 @@ def _parse_target(raw: dict[str, Any]) -> HardwareTarget:
         ),
         sm=raw.get("sm"),
         preferred_engine=raw.get("preferred_engine"),
+        suggested_models=[str(x) for x in suggested],
+        engine_template=raw.get("engine_template"),
     )
+
+
+def _parse_engine_templates(raw: dict[str, Any]) -> dict[str, dict[str, dict[str, Any]]]:
+    """Parse [engines.<name>.<layer>] tables into engine → layer → kwargs."""
+    engines_raw = raw.get("engines") or {}
+    out: dict[str, dict[str, dict[str, Any]]] = {}
+    if not isinstance(engines_raw, dict):
+        return out
+    for engine_name, layers in engines_raw.items():
+        if not isinstance(layers, dict):
+            continue
+        parsed: dict[str, dict[str, Any]] = {}
+        for layer_name, kwargs in layers.items():
+            if isinstance(kwargs, dict):
+                parsed[str(layer_name)] = dict(kwargs)
+        out[str(engine_name)] = parsed
+    return out
+
+
+def resolve_engine_args(
+    catalog: Catalog,
+    engine: str,
+    *,
+    profile: str = "coding",
+    target_template: str | None = None,
+    overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Merge defaults → profile → hardware template → explicit overrides."""
+    layers = catalog.engine_templates.get(engine) or {}
+    merged: dict[str, Any] = {}
+    for key in ("defaults", profile, target_template or ""):
+        if key and key in layers:
+            merged.update(layers[key])
+    if overrides:
+        merged.update(overrides)
+    return merged
 
 
 def load_catalog(directory: Path | None = None) -> Catalog:
@@ -178,6 +230,7 @@ def load_catalog(directory: Path | None = None) -> Catalog:
         targets=targets,
         policy=policy,
         profiles=profiles,
+        engine_templates=_parse_engine_templates(hardware_raw),
         version=version,
     )
 
@@ -188,6 +241,13 @@ def get_model(catalog: Catalog, model_id: str) -> ModelEntry:
             return model
     known = ", ".join(m.id for m in catalog.models)
     raise KeyError(f"unknown model '{model_id}'; known: {known}")
+
+
+def get_target(catalog: Catalog, target_id: str) -> HardwareTarget | None:
+    for target in catalog.targets:
+        if target.id == target_id:
+            return target
+    return None
 
 
 def profile_settings(catalog: Catalog, profile: str, family: str) -> dict[str, Any]:

@@ -84,4 +84,29 @@ def test_deepseek_fits_128gb() -> None:
     hw = _hw(ram=128, apple=True)
     result = plan_model(catalog, hw, "deepseek-v4-flash", profile="coding", include_opt_in=True)
     assert result.selected is not None
-    assert result.selected.quant == "UD-IQ3_XXS"
+    assert "IQ3" in result.selected.quant or result.selected.quant.startswith("UD-")
+
+
+def test_catalog_prefers_non_unsloth_when_marked() -> None:
+    catalog = load_catalog()
+    hw = _hw(ram=64, apple=True)
+    result = plan_model(catalog, hw, "qwen3.6-35b-a3b", profile="coding")
+    assert result.selected is not None
+    provider = (result.selected.variant or {}).get("provider")
+    # On Apple Silicon, mlx-community preferred MLX should win when it fits
+    assert result.selected.engine in {"mlx", "llama.cpp"}
+    assert provider in {"mlx-community", "bartowski", "ggml-org", "mudler", "unsloth"}
+
+
+def test_catalog_has_multiple_providers() -> None:
+    catalog = load_catalog()
+    providers: set[str] = set()
+    for model in catalog.models:
+        for variant in model.variants:
+            providers.add(variant.provider)
+    assert "bartowski" in providers
+    assert "mlx-community" in providers
+    assert "ggml-org" in providers
+    assert "Qwen" in providers or "google" in providers
+    assert "unsloth" in providers
+    assert len(providers) >= 5

@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from rondine.engines.base import EngineAdapter, LaunchSpec
+from rondine.engines.base import EngineAdapter, LaunchSpec, append_flag, selected_engine_args
 from rondine.paths import engines_dir, models_dir, which
 
 
@@ -185,8 +185,35 @@ class LlamaCppAdapter(EngineAdapter):
             argv += ["--spec-type", "draft-mtp", "--spec-draft-n-max", "2"]
             notes.append("MTP speculative decoding enabled")
 
-        if platform.system().lower() == "darwin" or which("nvidia-smi"):
-            argv += ["-ngl", "99"]
+        args = selected_engine_args(plan)
+        ngl = args.get("n_gpu_layers")
+        if ngl is None and (platform.system().lower() == "darwin" or which("nvidia-smi")):
+            ngl = 99
+        if ngl is not None:
+            argv += ["-ngl", str(int(ngl))]
+
+        if args.get("flash_attn"):
+            append_flag(argv, "--flash-attn", "on")
+        if args.get("cont_batching", True):
+            append_flag(argv, "--cont-batching")
+        if "parallel" in args:
+            append_flag(argv, "--parallel", int(args["parallel"]))
+        if "batch_size" in args:
+            append_flag(argv, "--batch-size", int(args["batch_size"]))
+        if "ubatch_size" in args:
+            append_flag(argv, "--ubatch-size", int(args["ubatch_size"]))
+        threads = int(args.get("threads") or 0)
+        if threads > 0:
+            append_flag(argv, "--threads", threads)
+        if args.get("cache_type_k"):
+            append_flag(argv, "--cache-type-k", args["cache_type_k"])
+        if args.get("cache_type_v"):
+            append_flag(argv, "--cache-type-v", args["cache_type_v"])
+        if args:
+            notes.append(
+                "engine template: "
+                + ", ".join(f"{k}={v}" for k, v in sorted(args.items()) if v not in (None, ""))
+            )
 
         env = {**os.environ, "LLAMA_CACHE": str(dest)}
         return LaunchSpec(

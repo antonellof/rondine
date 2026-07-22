@@ -1,12 +1,12 @@
-# Rondine model catalog — reviewed Unsloth / upstream presets.
+# Rondine curated model allowlist + coding presets.
+# Hub discovery (`rondine search`) finds additional repos; this file gates defaults.
 # Memory figures are approximate weight sizes (GB). Planner adds OS + KV headroom.
 
 [catalog]
-version = 1
-source = "https://unsloth.ai/docs"
+version = 2
 
 # ---------------------------------------------------------------------------
-# Qwen3.6
+# Qwen3.6 27B
 # ---------------------------------------------------------------------------
 
 [[models]]
@@ -18,11 +18,36 @@ active_params = "27B"
 max_context = 262144
 modalities = ["text", "image"]
 coding_priority = 10
-notes = "Strong dense coding model; runs on ~18GB at 4-bit."
+notes = "Strong dense coding model; ~18GB at 4-bit."
 
 [[models.variants]]
 engine = "llama.cpp"
 format = "gguf"
+provider = "bartowski"
+repo = "bartowski/Qwen_Qwen3.6-27B-GGUF"
+quant = "Q4_K_M"
+include = ["*Q4_K_M*"]
+weight_gb = 17.5
+preferred = true
+quality_bonus = 2
+recommended_profiles = ["coding", "chat"]
+notes = "imatrix Q4_K_M — solid default GGUF"
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+provider = "ggml-org"
+repo = "ggml-org/Qwen3.6-27B-GGUF"
+quant = "Q4_K_M"
+include = ["*Q4_K_M*", "*Q4_0*"]
+weight_gb = 17.5
+recommended_profiles = ["coding", "chat"]
+notes = "Official ggml-org Hub mirror"
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+provider = "unsloth"
 repo = "unsloth/Qwen3.6-27B-GGUF"
 quant = "UD-Q4_K_XL"
 include = ["*UD-Q4_K_XL*"]
@@ -33,16 +58,31 @@ recommended_profiles = ["coding", "chat"]
 [[models.variants]]
 engine = "llama.cpp"
 format = "gguf"
+provider = "unsloth"
 repo = "unsloth/Qwen3.6-27B-MTP-GGUF"
 quant = "UD-Q4_K_XL"
 include = ["*UD-Q4_K_XL*", "*mmproj-F16*"]
 weight_gb = 19.0
 mtp = true
 recommended_profiles = ["coding"]
+notes = "MTP speculative decoding"
 
 [[models.variants]]
 engine = "mlx"
 format = "mlx"
+provider = "mlx-community"
+repo = "mlx-community/Qwen3.6-27B-4bit"
+quant = "4bit"
+weight_gb = 16.0
+preferred = true
+quality_bonus = 3
+recommended_profiles = ["coding", "chat"]
+notes = "mlx-community 4-bit for Apple Silicon"
+
+[[models.variants]]
+engine = "mlx"
+format = "mlx"
+provider = "unsloth"
 repo = "unsloth/Qwen3.6-27B-UD-MLX-4bit"
 quant = "4bit"
 weight_gb = 26.2
@@ -50,12 +90,30 @@ recommended_profiles = ["coding", "chat"]
 
 [[models.variants]]
 engine = "vllm"
+format = "safetensors"
+provider = "Qwen"
+repo = "Qwen/Qwen3.6-27B"
+quant = "BF16"
+weight_gb = 55.0
+recommended_profiles = ["coding", "chat"]
+notes = "Official Transformers weights (vLLM / SGLang)"
+
+[[models.variants]]
+engine = "vllm"
 format = "nvfp4"
+provider = "unsloth"
 repo = "unsloth/Qwen3.6-27B-NVFP4"
 quant = "NVFP4"
 weight_gb = 18.0
 spark_moe_backend = "flashinfer_b12x"
+preferred = true
+quality_bonus = 4
 recommended_profiles = ["coding", "chat"]
+notes = "Blackwell / DGX Spark NVFP4"
+
+# ---------------------------------------------------------------------------
+# Qwen3.6 35B-A3B
+# ---------------------------------------------------------------------------
 
 [[models]]
 id = "qwen3.6-35b-a3b"
@@ -66,11 +124,47 @@ active_params = "3B"
 max_context = 262144
 modalities = ["text", "image"]
 coding_priority = 20
-notes = "MoE coding sweet spot; ~23GB at dynamic 4-bit."
+notes = "MoE coding sweet spot; ~22GB at Q4_K_M."
 
 [[models.variants]]
 engine = "llama.cpp"
 format = "gguf"
+provider = "bartowski"
+repo = "bartowski/Qwen_Qwen3.6-35B-A3B-GGUF"
+quant = "Q4_K_M"
+include = ["*Q4_K_M*"]
+weight_gb = 22.3
+preferred = true
+quality_bonus = 3
+recommended_profiles = ["coding", "chat"]
+notes = "bartowski imatrix — recommended local GGUF"
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+provider = "ggml-org"
+repo = "ggml-org/Qwen3.6-35B-A3B-GGUF"
+quant = "Q4_0"
+include = ["*Q4_0*", "*Q8_0*"]
+weight_gb = 22.0
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+provider = "mudler"
+repo = "mudler/Qwen3.6-35B-A3B-APEX-GGUF"
+quant = "APEX-I-Balanced"
+include = ["*APEX-I-Balanced*"]
+weight_gb = 24.0
+quality_bonus = 4
+recommended_profiles = ["coding"]
+notes = "APEX MoE-aware quant (alternative to Unsloth UD)"
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+provider = "unsloth"
 repo = "unsloth/Qwen3.6-35B-A3B-GGUF"
 quant = "UD-Q4_K_XL"
 include = ["*UD-Q4_K_XL*", "*mmproj-F16*"]
@@ -80,6 +174,7 @@ recommended_profiles = ["coding", "chat"]
 [[models.variants]]
 engine = "llama.cpp"
 format = "gguf"
+provider = "unsloth"
 repo = "unsloth/Qwen3.6-35B-A3B-MTP-GGUF"
 quant = "UD-Q4_K_XL"
 include = ["*UD-Q4_K_XL*", "*mmproj-F16*"]
@@ -90,6 +185,18 @@ recommended_profiles = ["coding"]
 [[models.variants]]
 engine = "mlx"
 format = "mlx"
+provider = "mlx-community"
+repo = "mlx-community/Qwen3.6-35B-A3B-4bit"
+quant = "4bit"
+weight_gb = 20.0
+preferred = true
+quality_bonus = 3
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "mlx"
+format = "mlx"
+provider = "unsloth"
 repo = "unsloth/Qwen3.6-35B-A3B-UD-MLX-4bit"
 quant = "4bit"
 weight_gb = 24.0
@@ -97,11 +204,24 @@ recommended_profiles = ["coding", "chat"]
 
 [[models.variants]]
 engine = "vllm"
+format = "safetensors"
+provider = "Qwen"
+repo = "Qwen/Qwen3.6-35B-A3B"
+quant = "BF16"
+weight_gb = 70.0
+recommended_profiles = ["coding", "chat"]
+notes = "Official weights for vLLM / SGLang"
+
+[[models.variants]]
+engine = "vllm"
 format = "nvfp4"
+provider = "unsloth"
 repo = "unsloth/Qwen3.6-35B-A3B-NVFP4-Fast"
 quant = "NVFP4-Fast"
 weight_gb = 24.0
 spark_moe_backend = "flashinfer_b12x"
+preferred = true
+quality_bonus = 4
 recommended_profiles = ["coding", "chat"]
 
 # ---------------------------------------------------------------------------
@@ -122,6 +242,51 @@ notes = "Compact multimodal; good laptop / low-RAM coding fallback."
 [[models.variants]]
 engine = "llama.cpp"
 format = "gguf"
+provider = "bartowski"
+repo = "bartowski/gemma-4-12B-it-GGUF"
+quant = "Q4_K_M"
+include = ["*Q4_K_M*"]
+weight_gb = 7.5
+preferred = true
+quality_bonus = 2
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+provider = "lmstudio-community"
+repo = "lmstudio-community/gemma-4-12B-it-GGUF"
+quant = "Q4_K_M"
+include = ["*Q4_K_M*"]
+weight_gb = 7.5
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+provider = "ggml-org"
+repo = "ggml-org/gemma-4-12B-it-GGUF"
+quant = "Q4_0"
+include = ["*Q4_0*", "*Q4_K*"]
+weight_gb = 7.5
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+provider = "google"
+repo = "google/gemma-4-12B-it-qat-q4_0-gguf"
+quant = "Q4_0"
+include = ["*.gguf"]
+weight_gb = 7.5
+quality_bonus = 3
+recommended_profiles = ["coding", "chat"]
+notes = "Official Google QAT GGUF"
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+provider = "unsloth"
 repo = "unsloth/gemma-4-12b-it-GGUF"
 quant = "UD-Q4_K_XL"
 include = ["*UD-Q4_K_XL*"]
@@ -129,8 +294,28 @@ weight_gb = 8.0
 recommended_profiles = ["coding", "chat"]
 
 [[models.variants]]
+engine = "mlx"
+format = "mlx"
+provider = "mlx-community"
+repo = "mlx-community/gemma-4-12b-it-4bit"
+quant = "4bit"
+weight_gb = 8.0
+preferred = true
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "vllm"
+format = "safetensors"
+provider = "google"
+repo = "google/gemma-4-12b-it"
+quant = "BF16"
+weight_gb = 25.0
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
 engine = "vllm"
 format = "nvfp4"
+provider = "unsloth"
 repo = "unsloth/gemma-4-12b-it-NVFP4"
 quant = "NVFP4"
 weight_gb = 11.0
@@ -150,6 +335,29 @@ notes = "MoE speed/quality tradeoff for local coding."
 [[models.variants]]
 engine = "llama.cpp"
 format = "gguf"
+provider = "bartowski"
+repo = "bartowski/google_gemma-4-26B-A4B-it-GGUF"
+quant = "Q4_K_M"
+include = ["*Q4_K_M*"]
+weight_gb = 17.0
+preferred = true
+quality_bonus = 3
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+provider = "ggml-org"
+repo = "ggml-org/gemma-4-26B-A4B-GGUF"
+quant = "Q4_0"
+include = ["*Q4_0*", "*Q8_0*"]
+weight_gb = 17.0
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+provider = "unsloth"
 repo = "unsloth/gemma-4-26B-A4B-it-GGUF"
 quant = "UD-Q4_K_XL"
 include = ["*UD-Q4_K_XL*", "*mmproj-BF16*"]
@@ -159,6 +367,18 @@ recommended_profiles = ["coding", "chat"]
 [[models.variants]]
 engine = "mlx"
 format = "mlx"
+provider = "mlx-community"
+repo = "mlx-community/gemma-4-26b-a4b-4bit"
+quant = "4bit"
+weight_gb = 15.6
+preferred = true
+quality_bonus = 3
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "mlx"
+format = "mlx"
+provider = "unsloth"
 repo = "unsloth/gemma-4-26b-a4b-it-UD-MLX-4bit"
 quant = "4bit"
 weight_gb = 18.0
@@ -166,11 +386,22 @@ recommended_profiles = ["coding", "chat"]
 
 [[models.variants]]
 engine = "vllm"
+format = "safetensors"
+provider = "google"
+repo = "google/gemma-4-26B-A4B-it"
+quant = "BF16"
+weight_gb = 52.0
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "vllm"
 format = "nvfp4"
+provider = "unsloth"
 repo = "unsloth/gemma-4-26B-A4B-it-NVFP4"
 quant = "NVFP4"
 weight_gb = 26.0
 spark_moe_backend = "flashinfer_b12x"
+preferred = true
 recommended_profiles = ["coding", "chat"]
 
 [[models]]
@@ -187,6 +418,19 @@ notes = "Strongest Gemma 4 dense model."
 [[models.variants]]
 engine = "llama.cpp"
 format = "gguf"
+provider = "bartowski"
+repo = "bartowski/google_gemma-4-31B-it-GGUF"
+quant = "Q4_K_M"
+include = ["*Q4_K_M*"]
+weight_gb = 19.0
+preferred = true
+quality_bonus = 2
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+provider = "unsloth"
 repo = "unsloth/gemma-4-31B-it-GGUF"
 quant = "UD-Q4_K_XL"
 include = ["*UD-Q4_K_XL*", "*mmproj-BF16*"]
@@ -196,6 +440,17 @@ recommended_profiles = ["coding", "chat"]
 [[models.variants]]
 engine = "mlx"
 format = "mlx"
+provider = "mlx-community"
+repo = "mlx-community/gemma-4-31b-it-4bit"
+quant = "4bit"
+weight_gb = 18.0
+preferred = true
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "mlx"
+format = "mlx"
+provider = "unsloth"
 repo = "unsloth/gemma-4-31b-it-UD-MLX-4bit"
 quant = "4bit"
 weight_gb = 20.0
@@ -203,7 +458,17 @@ recommended_profiles = ["coding", "chat"]
 
 [[models.variants]]
 engine = "vllm"
+format = "safetensors"
+provider = "google"
+repo = "google/gemma-4-31B-it"
+quant = "BF16"
+weight_gb = 62.0
+recommended_profiles = ["coding", "chat"]
+
+[[models.variants]]
+engine = "vllm"
 format = "nvfp4"
+provider = "unsloth"
 repo = "unsloth/gemma-4-31B-it-NVFP4"
 quant = "NVFP4"
 weight_gb = 32.0
@@ -222,28 +487,56 @@ active_params = "13B"
 max_context = 1048576
 modalities = ["text"]
 coding_priority = 15
-notes = "Large MoE; needs ~110GB+ for 3-bit. Opt-in on smaller machines."
+notes = "Large MoE; needs ~110GB+ for 3-bit. Prefer Unsloth UD on upstream llama.cpp."
 opt_in = true
 
 [[models.variants]]
 engine = "llama.cpp"
 format = "gguf"
+provider = "unsloth"
 repo = "unsloth/DeepSeek-V4-Flash-GGUF"
 quant = "UD-IQ3_XXS"
 include = ["*UD-IQ3_XXS*"]
 weight_gb = 103.0
+preferred = true
+quality_bonus = 5
 recommended_profiles = ["coding", "chat"]
 min_ram_gb = 110.0
+notes = "Bit-exact MXFP4 experts path; recommended on stock llama.cpp"
 
 [[models.variants]]
 engine = "llama.cpp"
 format = "gguf"
+provider = "unsloth"
 repo = "unsloth/DeepSeek-V4-Flash-GGUF"
 quant = "UD-Q4_K_XL"
 include = ["*UD-Q4_K_XL*"]
 weight_gb = 155.0
 recommended_profiles = ["coding"]
 min_ram_gb = 162.0
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+provider = "bartowski"
+repo = "bartowski/DeepSeek-V4-Flash-GGUF"
+quant = "Q4_K_M"
+include = ["*Q4_K_M*"]
+weight_gb = 160.0
+recommended_profiles = ["coding"]
+min_ram_gb = 169.0
+notes = "bartowski imatrix alternative"
+
+[[models.variants]]
+engine = "vllm"
+format = "safetensors"
+provider = "deepseek-ai"
+repo = "deepseek-ai/DeepSeek-V4-Flash"
+quant = "BF16"
+weight_gb = 156.0
+recommended_profiles = ["coding"]
+min_ram_gb = 160.0
+notes = "Official checkpoint for multi-GPU / Spark clusters"
 
 # ---------------------------------------------------------------------------
 # GLM-5.2
@@ -264,16 +557,20 @@ opt_in = true
 [[models.variants]]
 engine = "llama.cpp"
 format = "gguf"
+provider = "unsloth"
 repo = "unsloth/GLM-5.2-GGUF"
 quant = "UD-IQ2_M"
 include = ["*UD-IQ2_M*"]
 weight_gb = 239.0
+preferred = true
+quality_bonus = 4
 recommended_profiles = ["coding"]
 min_ram_gb = 245.0
 
 [[models.variants]]
 engine = "llama.cpp"
 format = "gguf"
+provider = "unsloth"
 repo = "unsloth/GLM-5.2-GGUF"
 quant = "UD-IQ1_S"
 include = ["*UD-IQ1_S*"]
@@ -281,8 +578,19 @@ weight_gb = 223.0
 recommended_profiles = ["coding"]
 min_ram_gb = 223.0
 
+[[models.variants]]
+engine = "vllm"
+format = "safetensors"
+provider = "zai-org"
+repo = "zai-org/GLM-5.2"
+quant = "BF16"
+weight_gb = 1500.0
+recommended_profiles = ["coding"]
+min_ram_gb = 800.0
+notes = "Official full weights — cluster / multi-node only"
+
 # ---------------------------------------------------------------------------
-# Profiles — sampling + reasoning defaults
+# Profiles
 # ---------------------------------------------------------------------------
 
 [profiles.coding]

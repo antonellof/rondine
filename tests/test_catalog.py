@@ -14,6 +14,11 @@ def test_load_catalog() -> None:
     assert any(m.id == "qwen3.6-35b-a3b" for m in catalog.models)
     assert catalog.policy.default_port == 8080
     assert catalog.targets
+    assert "llama.cpp" in catalog.engine_templates
+    assert "defaults" in catalog.engine_templates["llama.cpp"]
+    mac36 = next(t for t in catalog.targets if t.id == "mac-36")
+    assert mac36.suggested_models
+    assert mac36.preferred_engine == "mlx"
 
 
 def test_get_model_and_profile() -> None:

@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from rondine.engines.base import EngineAdapter, LaunchSpec
+from rondine.engines.base import EngineAdapter, LaunchSpec, selected_engine_args
 from rondine.paths import engines_dir, which
 
 
@@ -89,10 +89,29 @@ class MlxAdapter(EngineAdapter):
             "--port",
             str(port),
         ]
+        args = selected_engine_args(plan)
         notes = [
             "MLX loads Hugging Face MLX repos; first run downloads weights.",
             f"alias/model id for clients: {alias} (engine may report HF id)",
         ]
+        if args.get("trust_remote_code"):
+            notes.append("trust_remote_code enabled for Hub config")
+        if args:
+            notes.append(
+                "engine template: "
+                + ", ".join(f"{k}={v}" for k, v in sorted(args.items()) if v not in (None, ""))
+            )
+        # Sampling stays client-side for MLX server; surface it for presets.
+        sampling = selected.get("sampling") or {}
+        if sampling:
+            notes.append(
+                "client sampling: "
+                + ", ".join(
+                    f"{k}={v}"
+                    for k, v in sampling.items()
+                    if k != "chat_template_kwargs" and v not in (None, "")
+                )
+            )
         return LaunchSpec(
             engine=self.name,
             argv=argv,

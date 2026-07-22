@@ -84,6 +84,12 @@ def plans_dir() -> Path:
     return path
 
 
+def presets_dir() -> Path:
+    path = data_home() / "presets"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def clusters_dir() -> Path:
     path = data_home() / "clusters"
     path.mkdir(parents=True, exist_ok=True)

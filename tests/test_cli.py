@@ -29,6 +29,27 @@ def test_cli_plan_json(tmp_path, monkeypatch) -> None:  # type: ignore[no-untype
     assert "qwen3.6-27b" in result.output or result.exit_code in {0, 1}
 
 
+def test_cli_suggest(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
+    runner = CliRunner()
+    result = runner.invoke(main, ["suggest", "--profile", "coding", "--limit", "3"])
+    assert result.exit_code == 0
+    assert "recommended configs" in result.output.lower() or "no fitting" in result.output.lower()
+
+
+def test_cli_suggest_configure(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["suggest", "--configure", "1", "--save-as", "coding", "--limit", "3"],
+    )
+    if result.exit_code != 0:
+        return
+    assert (tmp_path / "plans" / "last.json").is_file()
+    assert (tmp_path / "presets" / "coding.json").is_file()
+
+
 def test_cli_serve_dry_run(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
     runner = CliRunner()

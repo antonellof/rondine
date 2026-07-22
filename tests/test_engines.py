@@ -35,12 +35,25 @@ def _plan(engine: str, **kwargs: object) -> dict:
 
 def test_llama_serve_dry_flags() -> None:
     adapter = LlamaCppAdapter()
-    spec = adapter.build_serve(_plan("llama.cpp"), host="127.0.0.1", port=8080)
+    plan = _plan("llama.cpp")
+    plan["selected"]["engine_args"] = {
+        "n_gpu_layers": 99,
+        "flash_attn": True,
+        "parallel": 1,
+        "batch_size": 512,
+        "ubatch_size": 128,
+        "cache_type_k": "q4_0",
+        "cache_type_v": "q4_0",
+    }
+    spec = adapter.build_serve(plan, host="127.0.0.1", port=8080)
     cmd = spec.command_line()
     assert "llama-server" in cmd
     assert "--temp" in cmd
     assert "0.6" in cmd
     assert "--chat-template-kwargs" in cmd
+    assert "--parallel" in cmd
+    assert "--batch-size" in cmd
+    assert "--cache-type-k" in cmd
     assert spec.base_url == "http://127.0.0.1:8080/v1"
 
 
@@ -75,11 +88,21 @@ def test_vllm_spark_moe_backend() -> None:
         quant="NVFP4-Fast",
         variant={"spark_moe_backend": "flashinfer_b12x"},
     )
+    plan["selected"]["engine_args"] = {
+        "gpu_memory_utilization": 0.92,
+        "max_model_len": 65536,
+        "enable_prefix_caching": True,
+        "tensor_parallel_size": 1,
+        "dtype": "auto",
+    }
     spec = VllmAdapter().build_serve(plan, host="0.0.0.0", port=8000)
     joined = spec.command_line()
     assert "vllm" in joined
     assert "flashinfer_b12x" in joined
     assert "unsloth/Qwen3.6-35B-A3B-NVFP4-Fast" in joined
+    assert "--gpu-memory-utilization" in joined
+    assert "--max-model-len" in joined
+    assert "--enable-prefix-caching" in joined
 
 
 def test_setup_dry_run_returns_commands() -> None:

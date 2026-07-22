@@ -7,7 +7,7 @@ import platform
 import subprocess
 from typing import Any
 
-from rondine.engines.base import EngineAdapter, LaunchSpec
+from rondine.engines.base import EngineAdapter, LaunchSpec, append_flag, selected_engine_args
 from rondine.paths import which
 
 # Pinned NGC tag used by NVIDIA Spark playbooks (override with RONDINE_VLLM_IMAGE).
@@ -74,8 +74,24 @@ class VllmAdapter(EngineAdapter):
         variant = selected.get("variant") or {}
         alias = f"rondine/{model_id}"
         notes: list[str] = []
+        args = selected_engine_args(plan)
+        context = int(selected.get("context") or args.get("max_model_len") or 32768)
 
         inner = ["vllm", "serve", repo, "--host", host, "--port", str(port)]
+        append_flag(inner, "--max-model-len", int(args.get("max_model_len") or context))
+        if "gpu_memory_utilization" in args:
+            append_flag(
+                inner, "--gpu-memory-utilization", float(args["gpu_memory_utilization"])
+            )
+        if "tensor_parallel_size" in args:
+            append_flag(inner, "--tensor-parallel-size", int(args["tensor_parallel_size"]))
+        if args.get("dtype"):
+            append_flag(inner, "--dtype", args["dtype"])
+        if args.get("enable_prefix_caching"):
+            append_flag(inner, "--enable-prefix-caching")
+        if args.get("enforce_eager"):
+            append_flag(inner, "--enforce-eager")
+
         moe = variant.get("spark_moe_backend")
         env = {**os.environ}
         if moe:
@@ -83,6 +99,11 @@ class VllmAdapter(EngineAdapter):
             env["CUTE_DSL_ARCH"] = env.get("CUTE_DSL_ARCH", "sm_121a")
             notes.append(f"Spark MoE backend: {moe}")
             notes.append("CUTE_DSL_ARCH=sm_121a")
+        if args:
+            notes.append(
+                "engine template: "
+                + ", ".join(f"{k}={v}" for k, v in sorted(args.items()) if v not in (None, ""))
+            )
 
         if which("docker"):
             argv = [

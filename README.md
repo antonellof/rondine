@@ -25,7 +25,7 @@ Rondine is a thin control plane over battle-tested backends:
 | DGX Spark / GB10 | vLLM or llama.cpp | NVFP4 / GGUF |
 | Homogeneous clusters | MLX / vLLM / llama.cpp RPC | native per engine |
 
-It ships reviewed presets for frontier open models (Qwen3.6, Gemma 4, DeepSeek-V4-Flash, GLM-5.2), picks a quant that fits your machine, downloads weights, and launches an OpenAI-compatible local server.
+It scans your machine, suggests models that fit, builds engine-tuned launch configs, downloads weights, and starts an OpenAI-compatible local server. Named presets make restart one command.
 
 Rondine does **not** reinvent inference. It installs and drives llama.cpp, MLX-LM, and vLLM.
 
@@ -42,31 +42,52 @@ Requires Python 3.11+.
 ## Quick start
 
 ```bash
-rondine doctor
-rondine models
-rondine plan auto --profile coding
+rondine doctor                         # scan hardware + engines
+rondine suggest --profile coding       # ranked models + engine configs for this machine
+rondine suggest --configure 1 --save-as coding
 rondine setup
-rondine pull qwen3.6-35b-a3b
-rondine serve qwen3.6-35b-a3b --profile coding
+rondine pull                           # uses the configured plan
+rondine serve --preset coding
 rondine verify --profile coding
+```
+
+Discover more on the Hub when the curated list isn’t enough:
+
+```bash
+rondine search "Qwen3.6 35B GGUF"
+rondine inspect org/model-repo
+rondine plan org/model-repo --quant Q4_K_M --save-as qwen-gguf
 ```
 
 Dry-run any launch:
 
 ```bash
 rondine serve qwen3.6-27b --profile coding --dry-run
+rondine preset serve coding --dry-run
 ```
+
+## How suggestion works
+
+1. **Detect** RAM / Apple Silicon / Spark / CUDA and which engines are installed.
+2. **Match** a hardware target (`mac-36`, `spark-128`, …) with preferred engine + suggested models.
+3. **Score** curated variants (provider, quant, headroom, coding priority).
+4. **Configure** engine knobs from `catalog/hardware.toml` templates (llama.cpp `-ngl` / batch / KV cache, vLLM `--gpu-memory-utilization` / `--max-model-len`, …).
+5. **Save** a plan + optional named preset under `~/.rondine/presets/` for one-command restart.
 
 ## Commands
 
 | Command | Purpose |
 |---|---|
 | `doctor` | Probe hardware, engines, and memory |
-| `models` | List catalog entries and fit status |
-| `plan` | Recommend engine / quant / context |
+| `suggest` | Rank models that fit + show launch configs |
+| `models` | List curated catalog entries and fit status |
+| `search` | Live Hugging Face Hub discovery |
+| `inspect` | Hub repo files, sizes, recommended quant |
+| `plan` | Recommend engine / quant (catalog id, auto, or `org/name`) |
 | `setup` | Install pinned engine toolchains |
 | `pull` | Download a model for the resolved plan |
-| `serve` | Launch OpenAI-compatible server |
+| `serve` | Launch OpenAI-compatible server (`--preset`, `--save-as`) |
+| `preset` | `list` / `show` / `save` / `serve` / `delete` named presets |
 | `stop` | Stop a managed server |
 | `verify` | Health + coding smoke tests |
 | `cluster doctor/plan/serve` | Homogeneous dual-node helpers |
