@@ -1,8 +1,9 @@
 # Engine tuning notes
 
-Rondine merges performance knobs from `catalog/hardware.toml`:
+Rondine ships **optimized configurations** for common local hardware. Performance knobs
+are merged from `catalog/hardware.toml`:
 
-`defaults` → profile (`coding` / `chat`) → hardware template (`mac`, `mac-tight`, `spark`).
+`defaults` → profile (`coding` / `chat`) → hardware template (`mac`, `mac-tight`, `cuda`, `cuda-tight`, `spark`).
 
 ## Apple Silicon + llama.cpp
 

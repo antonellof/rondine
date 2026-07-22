@@ -17,6 +17,8 @@
 
 **Hardware-aware local LLM launcher for Mac, NVIDIA GPUs, and DGX Spark.**
 
+Rondine ships **optimized serve configurations** per machine class — engine flags, batch sizes, KV cache settings, and sampling profiles tuned for Apple Silicon, discrete NVIDIA GPUs, and DGX Spark — so you get strong local throughput without hand-tuning llama.cpp / MLX / vLLM.
+
 Rondine is a thin control plane over battle-tested backends:
 
 | Hardware | Engine | Format |
@@ -26,7 +28,7 @@ Rondine is a thin control plane over battle-tested backends:
 | DGX Spark / GB10 | vLLM or llama.cpp | NVFP4 / GGUF |
 | Homogeneous clusters | MLX / vLLM / llama.cpp RPC | native per engine |
 
-It scans your machine (RAM or **GPU VRAM**), suggests models that fit, builds engine-tuned launch configs, downloads weights, and starts an OpenAI-compatible local server. Named presets make restart one command.
+It scans your machine (RAM or **GPU VRAM**), suggests models that fit, applies those hardware-tuned configs, downloads weights, and starts an OpenAI-compatible local server. Named presets make restart one command.
 
 Rondine does **not** reinvent inference. It installs and drives llama.cpp, MLX-LM, and vLLM.
 
@@ -80,6 +82,16 @@ ASCII demo:
 5. **Save** a plan + optional named preset under `~/.rondine/presets/` for one-command restart.
 
 On discrete NVIDIA GPUs, fit estimates use **GPU VRAM** (not system RAM). Multi-GPU hosts size against GPU0 by default; tensor parallel is opt-in.
+
+## Optimized configurations
+
+Curated templates in `catalog/hardware.toml` merge **defaults → profile (`coding`/`chat`) → hardware class** (`mac`, `mac-tight`, `cuda`, `cuda-tight`, `spark`):
+
+- **llama.cpp** — GPU offload, flash-attn, batch/ubatch, KV cache quant, parallel slots
+- **MLX** — Metal sync env (`MLX_METAL_FAST_SYNCH`) for Apple Silicon throughput
+- **vLLM** — memory utilization, max model length, prefix caching (Spark / large CUDA)
+
+`rondine suggest` prints the resolved config; `serve` applies it. Details: [docs/engine-tuning.md](docs/engine-tuning.md).
 
 ## Commands
 

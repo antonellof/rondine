@@ -230,7 +230,7 @@ def _maybe_save_preset(
 @click.group()
 @click.version_option(__version__, prog_name="rondine")
 def main() -> None:
-    """Hardware-aware local LLM launcher for Mac, NVIDIA GPUs, and DGX Spark."""
+    """Hardware-aware local LLM launcher with optimized configs for Mac, NVIDIA GPUs, and DGX Spark."""
 
 
 @main.command()
