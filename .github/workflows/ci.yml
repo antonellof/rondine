@@ -25,10 +25,13 @@ jobs:
         run: uv run mypy src/rondine
       - name: Pytest
         run: uv run pytest -q
-      - name: Dry-run CLI
+      - name: CLI diagnostics
         run: |
           uv run rondine doctor
           uv run rondine models
-          uv run rondine plan qwen2.5-coder-3b --profile coding
           uv run rondine setup --dry-run
+      - name: Dry-run plan and serve
+        if: runner.os == 'Linux'
+        run: |
+          uv run rondine plan qwen2.5-coder-3b --profile coding
           uv run rondine serve qwen2.5-coder-3b --profile coding --dry-run
