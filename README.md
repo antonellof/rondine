@@ -47,7 +47,7 @@ chat-oriented sampling/concurrency. See the [CLI guide](docs/cli.md#suggest) for
 every `suggest` option, including `--limit`, `--opt-in`, `--json`,
 `--configure`, and `--save-as`.
 
-Rondine doctor and suggest terminal demo
+![Rondine doctor and suggest terminal demo](assets/rondine-demo.gif)
 
 ### Small-model smoke test
 
@@ -148,5 +148,8 @@ Apache-2.0. Model weights retain their upstream licenses.
 
 ---
 
-
-*Rondine means “swallow” in Italian.*
+<p align="center">
+  <img src="assets/rondine-swallow.png" alt="A swallow" width="220">
+  <br>
+  <em>Rondine means “swallow” in Italian.</em>
+</p>
