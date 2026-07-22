@@ -29,6 +29,6 @@ jobs:
         run: |
           uv run rondine doctor
           uv run rondine models
-          uv run rondine plan gemma-4-12b --profile coding
+          uv run rondine plan qwen2.5-coder-3b --profile coding
           uv run rondine setup --dry-run
-          uv run rondine serve gemma-4-12b --profile coding --dry-run
+          uv run rondine serve qwen2.5-coder-3b --profile coding --dry-run
