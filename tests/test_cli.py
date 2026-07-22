@@ -165,10 +165,22 @@ def test_cli_plan_explains_hybrid_cuda_requirement(tmp_path, monkeypatch) -> Non
 
 def test_cli_suggest(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "rondine.cli.detect_hardware",
+        lambda: HardwareInfo(
+            platform="darwin",
+            arch="arm64",
+            hostname="test",
+            ram_gb=32.0,
+            is_apple_silicon=True,
+            metal_available=True,
+            disk_free_gb=300.0,
+        ),
+    )
     runner = CliRunner()
     result = runner.invoke(main, ["suggest", "--profile", "coding", "--limit", "3"])
     assert result.exit_code == 0
-    assert "recommended configs" in result.output.lower() or "no fitting" in result.output.lower()
+    assert "recommended configs" in result.output.lower()
 
 
 def test_cli_suggest_help_documents_options() -> None:
