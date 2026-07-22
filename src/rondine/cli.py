@@ -230,6 +230,7 @@ def _maybe_save_preset(
     port: int,
     run_name: str,
     target_id: str | None = None,
+    quiet: bool = False,
 ) -> None:
     if not save_as:
         return
@@ -244,8 +245,9 @@ def _maybe_save_preset(
         engine_args=dict(selected.get("engine_args") or {}),
     )
     path = save_preset(preset)
-    click.echo(f"saved preset: {path}")
-    click.echo(f"restart later: rondine preset serve {save_as}")
+    if not quiet:
+        click.echo(f"saved preset: {path}")
+        click.echo(f"restart later: rondine preset serve {save_as}")
 
 
 @click.group()
@@ -543,6 +545,15 @@ def plan(
 
     if _is_hf_repo(model):
         selected = _plan_from_hub(model, profile=profile, context=context, quant=quant)
+        _maybe_save_preset(
+            save_as,
+            selected,
+            profile=profile,
+            host=catalog.policy.default_host,
+            port=catalog.policy.default_port,
+            run_name=save_as or "default",
+            quiet=as_json,
+        )
         if as_json:
             click.echo(json.dumps({"selected": selected, "source": "huggingface"}, indent=2))
             return
@@ -560,14 +571,6 @@ def plan(
         for reason in selected.get("reasons") or []:
             click.echo(f"  note: {reason}")
         click.echo(f"saved plan: {plans_dir() / 'last.json'}")
-        _maybe_save_preset(
-            save_as,
-            selected,
-            profile=profile,
-            host=catalog.policy.default_host,
-            port=catalog.policy.default_port,
-            run_name=save_as or "default",
-        )
         return
 
     result = plan_model(
@@ -580,6 +583,20 @@ def plan(
     )
     path = save_plan(result)
     if as_json:
+        if result.selected is not None:
+            payload = asdict(result.selected)
+            engine_args = (result.selected.variant or {}).get("engine_args") or {}
+            payload["engine_args"] = engine_args if isinstance(engine_args, dict) else {}
+            _maybe_save_preset(
+                save_as,
+                payload,
+                profile=profile,
+                host=catalog.policy.default_host,
+                port=catalog.policy.default_port,
+                run_name=save_as or "default",
+                target_id=result.target_id,
+                quiet=True,
+            )
         click.echo(
             json.dumps(
                 {

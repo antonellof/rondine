@@ -6,6 +6,57 @@
 version = 2
 
 # ---------------------------------------------------------------------------
+# Small coding models (fast smoke tests / low-memory machines)
+# ---------------------------------------------------------------------------
+
+[[models]]
+id = "qwen2.5-coder-1.5b"
+family = "qwen2.5"
+display_name = "Qwen2.5-Coder 1.5B Instruct"
+params = "1.5B"
+active_params = "1.5B"
+max_context = 32768
+modalities = ["text"]
+coding_priority = 4
+notes = "Tiny coding model; ~1.0GB at Q4_K_M. Useful for smoke tests."
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+provider = "Qwen"
+repo = "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF"
+quant = "Q4_K_M"
+include = ["*q4_k_m*"]
+weight_gb = 1.04
+preferred = true
+recommended_profiles = ["coding", "chat"]
+notes = "Official GGUF; suitable for CPU, Metal, and entry CUDA GPUs."
+
+[[models]]
+id = "qwen2.5-coder-3b"
+family = "qwen2.5"
+display_name = "Qwen2.5-Coder 3B Instruct"
+params = "3.4B"
+active_params = "3.4B"
+max_context = 32768
+modalities = ["text"]
+coding_priority = 6
+notes = "Small coding baseline; verified locally at ~2.0GB with Q4_K_M."
+
+[[models.variants]]
+engine = "llama.cpp"
+format = "gguf"
+provider = "Qwen"
+repo = "Qwen/Qwen2.5-Coder-3B-Instruct-GGUF"
+quant = "Q4_K_M"
+include = ["*q4_k_m*"]
+weight_gb = 1.96
+preferred = true
+quality_bonus = 1
+recommended_profiles = ["coding", "chat"]
+notes = "Official GGUF; validated with Rondine serve and verify on Apple M2 Pro."
+
+# ---------------------------------------------------------------------------
 # Qwen3.6 27B
 # ---------------------------------------------------------------------------
 
@@ -597,6 +648,11 @@ notes = "Official full weights — cluster / multi-node only"
 context = 32768
 description = "Practical coding context with model-specific sampling."
 
+[profiles.coding."qwen2.5"]
+temperature = 0.2
+top_p = 0.95
+top_k = 20
+
 [profiles.coding."qwen3.6"]
 temperature = 0.6
 top_p = 0.95
@@ -633,6 +689,11 @@ chat_template_kwargs = { reasoning_effort = "max" }
 [profiles.chat]
 context = 16384
 description = "General chat / lower context."
+
+[profiles.chat."qwen2.5"]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
 
 [profiles.chat."qwen3.6"]
 temperature = 0.7

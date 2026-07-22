@@ -47,6 +47,13 @@ Unified-memory machines typically cannot dedicate 100% of RAM to weights + KV.
 Rondine reserves OS headroom in the planner; treat ~70–75% of system RAM as a
 practical inference budget when estimating by hand.
 
+## Measured baseline
+
+The reproducible small-model smoke benchmark is documented in
+[benchmarks.md](benchmarks.md). On an Apple M2 Pro with 32GB unified memory,
+Qwen2.5-Coder 3B Q4_K_M fully offloaded to Metal and produced a median
+66.6 tokens/second across three 128-token coding requests.
+
 ## External references
 
 Community launchers / calculators that informed these defaults:

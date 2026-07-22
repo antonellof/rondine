@@ -112,6 +112,18 @@ def test_cuda_8_rejects_large_models() -> None:
         assert any(c.rejected for c in result.candidates)
 
 
+def test_cuda_8_auto_selects_small_coder() -> None:
+    catalog = load_catalog()
+    hw = _hw(ram=32, vram=8.0, gpu_name="NVIDIA GeForce RTX 4060")
+
+    result = plan_model(catalog, hw, None, profile="coding")
+
+    assert result.target_id == "cuda-8"
+    assert result.selected is not None
+    assert result.selected.model_id == "qwen2.5-coder-3b"
+    assert result.selected.estimate.fits
+
+
 def test_deepseek_fits_128gb() -> None:
     catalog = load_catalog()
     hw = _hw(ram=128, apple=True)

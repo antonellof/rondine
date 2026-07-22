@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from click.testing import CliRunner
 
 from rondine.catalog import load_catalog
@@ -68,6 +70,30 @@ def test_hub_plan_uses_discrete_gpu_vram() -> None:
     assert selected["estimate"]["available_gb"] == 24.0
     assert selected["estimate"]["total_gb"] == total
     assert not selected["estimate"]["fits"]
+
+
+def test_cli_plan_json_saves_preset(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "rondine.cli.detect_hardware",
+        lambda: HardwareInfo(
+            platform="darwin",
+            arch="arm64",
+            hostname="test",
+            ram_gb=48.0,
+            is_apple_silicon=True,
+            metal_available=True,
+        ),
+    )
+
+    result = CliRunner().invoke(
+        main,
+        ["plan", "gemma-4-12b", "--json", "--save-as", "json-plan"],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["selected"]["model_id"] == "gemma-4-12b"
+    assert (tmp_path / "presets" / "json-plan.json").is_file()
 
 
 def test_cli_suggest(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

@@ -54,6 +54,22 @@ rondine serve --preset coding
 rondine verify --profile coding
 ```
 
+### Small-model serve test
+
+Use the curated 2GB Qwen2.5-Coder model to verify the complete
+plan → pull → serve → OpenAI API path without downloading a large model:
+
+```bash
+rondine plan qwen2.5-coder-3b --context 4096 --save-as small-coder
+rondine pull qwen2.5-coder-3b
+rondine serve --preset small-coder
+rondine verify --name small-coder
+rondine stop --name small-coder
+```
+
+For an approximately 1GB smoke test, replace `qwen2.5-coder-3b` with
+`qwen2.5-coder-1.5b`. Both use official Qwen GGUF weights and llama.cpp.
+
 Discover more on the Hub when the curated list isn’t enough:
 
 ```bash
@@ -92,6 +108,16 @@ Curated templates in `catalog/hardware.toml` merge **defaults → profile (`codi
 - **vLLM** — memory utilization, max model length, prefix caching (Spark / large CUDA)
 
 `rondine suggest` prints the resolved config; `serve` applies it. Details: [docs/engine-tuning.md](docs/engine-tuning.md).
+
+## Benchmark
+
+On an Apple M2 Pro with 32GB unified memory, the 1.95GiB
+Qwen2.5-Coder 3B Q4_K_M model passed health, code generation, and tool-call
+verification while fully offloaded to Metal. Three 128-token coding runs
+measured 64.4, 66.6, and 66.7 tokens/second (66.6 median).
+
+See [docs/benchmarks.md](docs/benchmarks.md) for the commands, environment,
+memory observations, and limitations.
 
 ## Commands
 

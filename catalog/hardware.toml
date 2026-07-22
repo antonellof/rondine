@@ -234,9 +234,9 @@ require_cuda = true
 min_vram_gb = 6
 max_vram_gb = 10
 preferred_engine = "llama.cpp"
-suggested_models = ["gemma-4-12b"]
+suggested_models = ["qwen2.5-coder-3b", "qwen2.5-coder-1.5b"]
 engine_template = "cuda-tight"
-notes = "Laptop / entry desktop — small GGUF only."
+notes = "Laptop / entry desktop — Qwen2.5-Coder 1.5B/3B GGUF."
 
 [[targets]]
 id = "cuda-12"
@@ -247,9 +247,9 @@ require_cuda = true
 min_vram_gb = 10
 max_vram_gb = 14
 preferred_engine = "llama.cpp"
-suggested_models = ["gemma-4-12b", "qwen3.6-27b"]
+suggested_models = ["gemma-4-12b", "qwen2.5-coder-3b", "qwen2.5-coder-1.5b"]
 engine_template = "cuda-tight"
-notes = "RTX 4070-class — Gemma 12B / dense 27B Q4 with care."
+notes = "RTX 4070-class — Gemma 12B plus fast Qwen2.5-Coder fallbacks."
 
 [[targets]]
 id = "cuda-16"
