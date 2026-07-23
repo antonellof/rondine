@@ -13,11 +13,14 @@ API key: any non-empty string (most local servers ignore auth), e.g. `rondine`.
 
 ## Launch a coding preset
 
+Use bare `rondine` for the guided dashboard, or run the equivalent explicit
+workflow:
+
 ```bash
 rondine plan auto --profile coding
 rondine setup
 rondine pull
-rondine serve --profile coding
+rondine serve
 rondine verify --profile coding
 ```
 

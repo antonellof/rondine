@@ -1,0 +1,46 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set env(TERM) "xterm-256color"
+set env(RONDINE_COLOR) "1"
+set env(RONDINE_HOME) "/tmp/rondine-demo-[pid]"
+set env(PS1) {$ }
+
+log_user 0
+spawn bash --noprofile --norc
+expect {$ }
+log_user 1
+send "\r"
+expect {$ }
+after 300
+send "rondine\r"
+
+expect "Choose a workload"
+after 700
+send "\r"
+
+expect "Choose required context"
+after 700
+send "\r"
+
+expect "Choose model sources"
+after 700
+send "\033\[B\r"
+
+expect "Select a configuration"
+after 900
+send "\r"
+
+expect "Main menu"
+after 900
+send "\033\[B\033\[B\033\[B\033\[B\r"
+
+expect "Current configuration"
+after 1200
+expect "Main menu"
+send "q"
+
+expect "Goodbye from Rondine"
+after 1200
+send "exit\r"
+expect eof

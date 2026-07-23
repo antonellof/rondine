@@ -30,6 +30,10 @@ git clone https://github.com/antonellof/rondine.git
 cd rondine
 uv tool install .
 
+# Guided experience; resumes active plans and saved presets on later runs
+rondine
+
+# The same workflow as explicit commands
 rondine doctor
 rondine suggest --profile coding
 rondine suggest --configure 1 --save-as coding
@@ -44,12 +48,13 @@ Your OpenAI-compatible endpoint is `http://127.0.0.1:8080/v1`.
 `--profile coding` favors coding models, a 32K context, reasoning settings, and
 single-client engine tuning. Use `--profile chat` for a 16K context and
 chat-oriented sampling/concurrency. See the [CLI guide](docs/cli.md#suggest) for
-every `suggest` option, including `--limit`, `--opt-in`, `--json`,
-`--configure`, and `--save-as`. Suggestions include fitting models discovered
-through the Hugging Face API by default; use `--no-hub` for catalog-only,
-offline results or `--hub-query TEXT` to customize discovery.
+all options, including context requirements, Hub discovery, interactive
+selection, JSON output, configuration, and presets. Suggestions include fitting
+models discovered through the Hugging Face API by default; use `--no-hub` for
+catalog-only results or `--hub-query TEXT` to customize discovery. Cards are
+marked `TOP` (hardware-target pick), `HUB` (live discovery), or `CAT` (catalog).
 
-![Rondine doctor and suggest terminal demo](assets/rondine-demo.gif)
+![Rondine interactive doctor, model selection, and dashboard demo](assets/rondine-demo.gif)
 
 ### Small-model smoke test
 
@@ -62,6 +67,10 @@ rondine serve --preset small-coder
 rondine verify --name small-coder
 rondine stop --name small-coder
 ```
+
+The 4K context keeps this smoke test lightweight; it does not reproduce the 32K
+benchmark below. `--save-as small-coder` also names the managed server run, so
+the same name is accepted by `verify` and `stop`.
 
 Use `qwen2.5-coder-1.5b` instead for an approximately 1GB download.
 
@@ -119,6 +128,7 @@ make it unusably slow; Rondine therefore never selects this mode automatically.
 ```bash
 rondine models                         # curated models and fit status
 rondine suggest --interactive          # choose a fitting config with arrow keys
+rondine --color suggest                # force color when TTY detection is wrong
 rondine search "Qwen GGUF"             # search Hugging Face
 rondine inspect org/model-repo         # inspect files, sizes, and quants
 rondine plan org/model-repo --quant Q4_K_M --save-as custom
@@ -136,7 +146,7 @@ On a 32GB M2 Pro, Qwen2.5-Coder 3B Q4_K_M ran fully on Metal at a median
 
 ## Documentation
 
-- [CLI guide and](docs/cli.md) `suggest` [/ memory-mode options](docs/cli.md)
+- [CLI guide: interactive dashboard, commands, suggest, and memory modes](docs/cli.md)
 - [Coding-client setup](docs/coding.md)
 - [Engine tuning](docs/engine-tuning.md)
 - [Hardware gates](docs/hardware-gates.md)

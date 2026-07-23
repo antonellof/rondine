@@ -2,6 +2,15 @@
 
 Single-node (`0.1.0`) and dual-node (`0.2.0`) gates. Fill rows on real hardware.
 
+## Interactive and discovery
+
+- [ ] First bare `rondine` run performs doctor, recommendation, and selection
+- [ ] A later bare `rondine` run offers the active plan/presets without repeating doctor
+- [ ] Loading a preset updates the active `last.json` plan
+- [ ] `rondine suggest --no-hub` works offline
+- [ ] Hub API failure falls back to catalog suggestions with a note
+- [ ] `rondine suggest --context 65536` excludes catalog models below 65,536 tokens
+
 ## Template
 
 | Field | Value |

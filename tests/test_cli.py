@@ -9,6 +9,7 @@ from click.testing import CliRunner
 from rondine.catalog import load_catalog
 from rondine.cli import _apply_hub_hardware_budget, _format_logo, main
 from rondine.detect import HardwareInfo
+from rondine.presets import preset_from_selected, save_preset
 from rondine.suggest import suggest_for_hardware
 
 
@@ -16,6 +17,130 @@ def test_format_logo_centers_artwork(monkeypatch) -> None:  # type: ignore[no-un
     monkeypatch.setattr("rondine.cli.brand_logo", lambda: "XX\nXXXX")
     assert _format_logo(width=8) == "  XX\n  XXXX"
     assert _format_logo(width=3) == "XX\nXXXX"
+
+
+def test_cli_without_arguments_shows_help_when_not_interactive() -> None:
+    result = CliRunner().invoke(main, [])
+
+    assert result.exit_code == 0
+    assert "Usage:" in result.output
+    assert "doctor" in result.output
+    assert "suggest" in result.output
+
+
+def test_cli_help_keeps_command_listing(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr("rondine.cli.is_interactive_terminal", lambda: True)
+    result = CliRunner().invoke(main, ["--help"])
+
+    assert result.exit_code == 0
+    assert "Commands:" in result.output
+    assert "Rondine interactive" not in result.output
+
+
+def test_cli_without_arguments_runs_guided_session(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
+    monkeypatch.setattr("rondine.cli.is_interactive_terminal", lambda: True)
+    monkeypatch.setattr(
+        "rondine.cli.detect_hardware",
+        lambda: HardwareInfo(
+            platform="darwin",
+            arch="arm64",
+            hostname="test",
+            ram_gb=32.0,
+            is_apple_silicon=True,
+            metal_available=True,
+            disk_free_gb=300.0,
+        ),
+    )
+    choices = iter((0, 0, 1, 0, 5))
+    monkeypatch.setattr(
+        "rondine.cli.select_menu",
+        lambda options, title=None: next(choices),
+    )
+
+    result = CliRunner().invoke(main, [])
+
+    assert result.exit_code == 0
+    assert "Rondine interactive" in result.output
+    assert "Hardware" in result.output
+    assert "Recommended configs" in result.output
+    assert "Goodbye from Rondine" in result.output
+    assert (tmp_path / "plans" / "last.json").is_file()
+
+
+def test_guided_session_resumes_active_plan_without_doctor(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
+    monkeypatch.setattr("rondine.cli.is_interactive_terminal", lambda: True)
+    plans = tmp_path / "plans"
+    plans.mkdir()
+    (plans / "last.json").write_text(
+        json.dumps(
+            {
+                "profile": "coding",
+                "selected": {
+                    "model_id": "existing-model",
+                    "display_name": "Existing model",
+                    "engine": "mlx",
+                    "quant": "4bit",
+                    "context": 32768,
+                    "repo": "example/existing-model",
+                },
+            }
+        )
+    )
+    choices = iter((0, 5))
+    monkeypatch.setattr(
+        "rondine.cli.select_menu",
+        lambda options, title=None: next(choices),
+    )
+
+    result = CliRunner().invoke(main, [])
+
+    assert result.exit_code == 0
+    assert "Welcome back" in result.output
+    assert "Existing model" in result.output
+    assert "scanning hardware" not in result.output
+    assert "Recommended configs" not in result.output
+
+
+def test_guided_session_can_load_saved_preset(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
+    monkeypatch.setattr("rondine.cli.is_interactive_terminal", lambda: True)
+    save_preset(
+        preset_from_selected(
+            "work",
+            {
+                "model_id": "saved-model",
+                "display_name": "Saved model",
+                "engine": "llama.cpp",
+                "quant": "Q4_K_M",
+                "context": 16384,
+                "repo": "example/saved-model",
+            },
+            profile="chat",
+            host="127.0.0.1",
+            port=8080,
+        )
+    )
+    choices = iter((0, 0, 5))
+    monkeypatch.setattr(
+        "rondine.cli.select_menu",
+        lambda options, title=None: next(choices),
+    )
+
+    result = CliRunner().invoke(main, [])
+
+    assert result.exit_code == 0
+    assert "loaded preset work" in result.output
+    plan = json.loads((tmp_path / "plans" / "last.json").read_text())
+    assert plan["preset_name"] == "work"
+    assert plan["selected"]["model_id"] == "saved-model"
 
 
 def test_cli_doctor() -> None:
@@ -195,7 +320,9 @@ def test_cli_suggest_help_documents_options() -> None:
         "--opt-in",
         "--hub",
         "--hub-query",
+        "--context",
         "--interactive",
+        "--no-interactive",
         "--json",
         "--configure",
         "--save-as",
@@ -238,6 +365,34 @@ def test_cli_suggest_uses_color_on_terminal(tmp_path, monkeypatch) -> None:  # t
     assert "\x1b[" not in plain.output
 
 
+def test_cli_suggest_offers_interactive_selection_after_output(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "rondine.cli.detect_hardware",
+        lambda: HardwareInfo(
+            platform="darwin",
+            arch="arm64",
+            hostname="test",
+            ram_gb=32.0,
+            is_apple_silicon=True,
+            metal_available=True,
+        ),
+    )
+    monkeypatch.setattr("rondine.cli.is_interactive_terminal", lambda: True)
+
+    result = CliRunner().invoke(
+        main,
+        ["suggest", "--limit", "2", "--no-hub"],
+        input="n\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Select and configure one of these suggestions now?" in result.output
+    assert not (tmp_path / "plans" / "last.json").exists()
+
+
 def test_cli_suggest_interactive_selects_and_configures(
     tmp_path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
@@ -269,6 +424,33 @@ def test_cli_suggest_interactive_selects_and_configures(
     assert "Select a configuration" in result.output
     plan = json.loads((tmp_path / "plans" / "last.json").read_text())
     assert plan["selected"]["model_id"] == expected.model_id
+
+
+def test_cli_suggest_context_changes_planned_window(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "rondine.cli.detect_hardware",
+        lambda: HardwareInfo(
+            platform="darwin",
+            arch="arm64",
+            hostname="test",
+            ram_gb=48.0,
+            is_apple_silicon=True,
+            metal_available=True,
+        ),
+    )
+
+    result = CliRunner().invoke(
+        main,
+        ["suggest", "--context", "4096", "--json", "--no-hub"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["suggestions"]
+    assert all(item["context"] == 4096 for item in payload["suggestions"])
 
 
 def test_cli_suggest_configure(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

@@ -64,17 +64,20 @@ def echo_rule(width: int = 72) -> None:
     click.echo(styled("─" * width, "rule"))
 
 
+def is_interactive_terminal() -> bool:
+    stdin = click.get_text_stream("stdin")
+    stdout = click.get_text_stream("stdout")
+    return bool(
+        getattr(stdin, "isatty", lambda: False)()
+        and getattr(stdout, "isatty", lambda: False)()
+    )
+
+
 def select_menu(options: Sequence[str], *, title: str = "Select a configuration") -> int | None:
     """Select an item with arrow keys, with a numbered prompt fallback."""
     if not options:
         return None
-    stdin = click.get_text_stream("stdin")
-    stdout = click.get_text_stream("stdout")
-    interactive_tty = bool(
-        getattr(stdin, "isatty", lambda: False)()
-        and getattr(stdout, "isatty", lambda: False)()
-    )
-    if not interactive_tty:
+    if not is_interactive_terminal():
         choice = click.prompt(
             title,
             type=click.IntRange(1, len(options)),
@@ -83,15 +86,14 @@ def select_menu(options: Sequence[str], *, title: str = "Select a configuration"
         )
         return int(choice) - 1
 
+    stdin = click.get_text_stream("stdin")
+    stdout = click.get_text_stream("stdout")
     import termios
     import tty
 
     selected = 0
     fd = stdin.fileno()
     previous = termios.tcgetattr(fd)
-    click.echo()
-    echo_heading(title)
-    click.echo(styled("↑/↓ move · enter select · q cancel", "muted"))
 
     def render(*, move_up: bool = False) -> None:
         if move_up:
@@ -107,9 +109,12 @@ def select_menu(options: Sequence[str], *, title: str = "Select a configuration"
                 stdout.write(f"  {option}\n")
         stdout.flush()
 
-    render()
     try:
         tty.setraw(fd)
+        click.echo()
+        echo_heading(title)
+        click.echo(styled("↑/↓ move · enter select · q cancel", "muted"))
+        render()
         while True:
             key = os.read(fd, 3)
             if key in {b"\r", b"\n"}:

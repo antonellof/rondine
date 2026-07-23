@@ -45,6 +45,7 @@ from rondine.ux import (
     echo_rule,
     echo_success,
     echo_warning,
+    is_interactive_terminal,
     select_menu,
     spinner,
     styled,
@@ -324,16 +325,26 @@ def _maybe_save_preset(
         click.echo(f"restart later: rondine preset serve {save_as}")
 
 
-@click.group(context_settings={"auto_envvar_prefix": "RONDINE"})
+@click.group(
+    context_settings={"auto_envvar_prefix": "RONDINE"},
+    invoke_without_command=True,
+)
 @click.version_option(__version__, prog_name="rondine")
 @click.option(
     "--color/--no-color",
     default=None,
     help="Force colored output on or off (env: RONDINE_COLOR).",
 )
-def main(color: bool | None) -> None:
+@click.pass_context
+def main(ctx: click.Context, color: bool | None) -> None:
     """Hardware-aware local LLM launcher for Mac, NVIDIA GPUs, and DGX Spark."""
-    click.get_current_context().color = color
+    ctx.color = color
+    if ctx.invoked_subcommand is not None:
+        return
+    if not is_interactive_terminal():
+        click.echo(ctx.get_help())
+        return
+    _interactive_cli(ctx)
 
 
 @main.command()
@@ -419,6 +430,13 @@ def doctor() -> None:
     help="Override the Hugging Face search text (default: coder or instruct).",
 )
 @click.option(
+    "--context",
+    type=click.IntRange(min=1024),
+    default=None,
+    metavar="TOKENS",
+    help="Require this context window and include it in memory-fit ranking.",
+)
+@click.option(
     "--json",
     "as_json",
     is_flag=True,
@@ -429,6 +447,11 @@ def doctor() -> None:
     "--interactive",
     is_flag=True,
     help="Select and configure a suggestion with an interactive menu.",
+)
+@click.option(
+    "--no-interactive",
+    is_flag=True,
+    help="Do not offer interactive selection after showing suggestions.",
 )
 @click.option(
     "--configure",
@@ -449,8 +472,10 @@ def suggest(
     opt_in: bool,
     hub: bool,
     hub_query: str | None,
+    context: int | None,
     as_json: bool,
     interactive: bool,
+    no_interactive: bool,
     configure_rank: int | None,
     save_as: str | None,
 ) -> None:
@@ -460,6 +485,10 @@ def suggest(
     if interactive and configure_rank is not None:
         raise click.ClickException(
             "--interactive cannot be combined with --configure"
+        )
+    if interactive and no_interactive:
+        raise click.ClickException(
+            "--interactive cannot be combined with --no-interactive"
         )
     catalog = load_catalog()
     with spinner("matching models to hardware"):
@@ -472,6 +501,7 @@ def suggest(
             include_opt_in=opt_in,
             include_hub=hub,
             hub_query=hub_query,
+            context_override=context,
         )
 
     if as_json:
@@ -497,6 +527,8 @@ def suggest(
     else:
         echo_kv("memory", f"{ram} GB RAM", value_role="accent")
     echo_kv("profile", profile)
+    if context is not None:
+        echo_kv("required context", f"{context:,} tokens", value_role="accent")
     echo_kv("engines", " → ".join(result.engine_order))
     if result.preferred_engine:
         echo_kv("preferred engine", result.preferred_engine, value_role="success")
@@ -569,6 +601,18 @@ def suggest(
         f"{styled('HUB', 'accent', bold=True)} Hugging Face · "
         f"{styled('CAT', 'muted', bold=True)} catalog"
     )
+
+    if (
+        not interactive
+        and not no_interactive
+        and configure_rank is None
+        and is_interactive_terminal()
+    ):
+        click.echo()
+        interactive = click.confirm(
+            "Select and configure one of these suggestions now?",
+            default=False,
+        )
 
     if interactive:
         labels = [
@@ -1271,6 +1315,425 @@ def cluster_serve_cmd(name: str, model_repo: str, engine: str, port: int, dry_ru
     raise click.ClickException(
         "refusing unsupervised multi-node serve; run the printed commands on each host"
     )
+
+
+def _wizard_suggest(ctx: click.Context) -> str:
+    echo_rule()
+    echo_heading("Find a model")
+    profile_index = select_menu(
+        [
+            "Coding — larger context and coding-focused ranking",
+            "Chat — lower context and conversational sampling",
+        ],
+        title="Choose a workload",
+    )
+    if profile_index is None:
+        echo_note("recommendation step skipped")
+        return "coding"
+    profile = "coding" if profile_index == 0 else "chat"
+    default_context = 32768 if profile == "coding" else 16384
+    context_values: list[int | None] = [None, 4096, 16384, 32768, 65536, 131072]
+    context_index = select_menu(
+        [
+            f"Profile default — {default_context:,} tokens",
+            "4,096 tokens — lowest memory",
+            "16,384 tokens",
+            "32,768 tokens",
+            "65,536 tokens",
+            "131,072 tokens",
+        ],
+        title="Choose required context",
+    )
+    if context_index is None:
+        echo_note("recommendation step skipped")
+        return profile
+    discovery_index = select_menu(
+        [
+            "Catalog + Hugging Face — discover current models",
+            "Curated catalog only — faster and offline",
+        ],
+        title="Choose model sources",
+    )
+    if discovery_index is None:
+        echo_note("recommendation step skipped")
+        return profile
+
+    ctx.invoke(
+        suggest,
+        profile=profile,
+        limit=5,
+        opt_in=False,
+        hub=discovery_index == 0,
+        hub_query=None,
+        context=context_values[context_index],
+        as_json=False,
+        interactive=True,
+        no_interactive=False,
+        configure_rank=None,
+        save_as=None,
+    )
+    return profile
+
+
+def _selected_label(selected: dict[str, Any]) -> str:
+    return str(
+        selected.get("display_name")
+        or selected.get("model_id")
+        or selected.get("repo")
+        or "unknown model"
+    )
+
+
+def _show_current_config() -> None:
+    plan_data = load_plan()
+    selected = (plan_data or {}).get("selected")
+    if not isinstance(selected, dict):
+        echo_warning("no active configuration; choose a model first")
+        return
+    echo_heading("Current configuration")
+    echo_kv("model", _selected_label(selected), value_role="success")
+    echo_kv("profile", (plan_data or {}).get("profile") or "coding")
+    echo_kv(
+        "runtime",
+        f"{selected.get('engine', '?')} / {selected.get('quant', '?')}",
+        value_role="accent",
+    )
+    echo_kv("context", f"{int(selected.get('context') or 0):,} tokens")
+    echo_kv("repo", selected.get("repo") or "(unknown)")
+    preset_name = (plan_data or {}).get("preset_name")
+    if preset_name:
+        echo_kv("preset", preset_name, value_role="warning")
+
+
+def _activate_preset(name: str) -> tuple[str, str]:
+    preset = load_preset(name)
+    selected = selected_with_preset_overrides(preset)
+    path = plans_dir() / "last.json"
+    path.write_text(
+        json.dumps(
+            {
+                "hardware": {},
+                "profile": preset.profile,
+                "target_id": preset.target_id,
+                "selected": selected,
+                "candidates": [selected],
+                "source": "preset",
+                "preset_name": preset.name,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    echo_success(f"✓ loaded preset {preset.name}")
+    return preset.profile, preset.name
+
+
+def _choose_preset() -> tuple[str, str] | None:
+    presets = list_presets()
+    if not presets:
+        echo_note("no saved presets")
+        return None
+    labels = [
+        f"{item.name} — {_selected_label(item.selected)} "
+        f"({item.selected.get('engine', '?')}/{item.selected.get('quant', '?')})"
+        for item in presets
+    ]
+    index = select_menu(labels, title="Load a saved preset")
+    if index is None:
+        return None
+    return _activate_preset(presets[index].name)
+
+
+def _model_actions(
+    ctx: click.Context,
+    *,
+    profile: str,
+    preset_name: str | None,
+) -> None:
+    if not isinstance((load_plan() or {}).get("selected"), dict):
+        echo_warning("no active configuration; choose a model first")
+        return
+    actions = [
+        "Preview serve command",
+        "Download model weights",
+        "Start model server",
+        "Verify running server",
+        "Stop running server",
+        "Back to main menu",
+    ]
+    while True:
+        action = select_menu(actions, title="Run selected model")
+        if action is None or action == 5:
+            return
+        if action == 0:
+            ctx.invoke(
+                serve,
+                model=None,
+                profile=profile,
+                quant=None,
+                host=None,
+                port=None,
+                dry_run=True,
+                foreground=False,
+                name="default",
+                preset_name=preset_name,
+                save_as=None,
+                memory_mode="auto",
+                allow_oversize=False,
+            )
+        elif action == 1:
+            if click.confirm("Download the selected model weights?", default=False):
+                ctx.invoke(
+                    pull,
+                    model=None,
+                    profile=profile,
+                    quant=None,
+                    memory_mode="auto",
+                    allow_oversize=False,
+                    dry_run=False,
+                )
+        elif action == 2:
+            if click.confirm("Start the selected model server?", default=True):
+                ctx.invoke(
+                    serve,
+                    model=None,
+                    profile=profile,
+                    quant=None,
+                    host=None,
+                    port=None,
+                    dry_run=False,
+                    foreground=False,
+                    name="default",
+                    preset_name=preset_name,
+                    save_as=None,
+                    memory_mode="auto",
+                    allow_oversize=False,
+                )
+        elif action == 3:
+            ctx.invoke(
+                verify,
+                profile=profile,
+                base_url=None,
+                name="default",
+                timeout=120,
+            )
+        elif action == 4:
+            name = click.prompt("Server name", default="default")
+            if click.confirm(f"Stop server {name!r}?", default=True):
+                ctx.invoke(stop, name=name)
+
+
+def _change_model_actions(
+    ctx: click.Context,
+    *,
+    profile: str,
+    preset_name: str | None,
+) -> tuple[str, str | None]:
+    actions = [
+        "Get hardware-aware recommendations",
+        "Browse curated catalog",
+        "Search Hugging Face",
+        "Plan by catalog ID or Hub repository",
+        "Back to main menu",
+    ]
+    while True:
+        action = select_menu(actions, title="Choose or change model")
+        if action is None or action == 4:
+            return profile, preset_name
+        if action == 0:
+            return _wizard_suggest(ctx), None
+        if action == 1:
+            ctx.invoke(models_cmd, profile=profile, opt_in=False)
+        elif action == 2:
+            query = click.prompt("Search Hugging Face", type=str)
+            engine_index = select_menu(
+                ["Any compatible engine", "llama.cpp", "MLX", "vLLM"],
+                title="Filter by engine",
+            )
+            if engine_index is not None:
+                engines = [None, "llama.cpp", "mlx", "vllm"]
+                ctx.invoke(
+                    search,
+                    query=query,
+                    engine=engines[engine_index],
+                    limit=15,
+                    as_json=False,
+                )
+        elif action == 3:
+            model = click.prompt("Catalog ID or Hugging Face org/name", type=str)
+            context = click.prompt(
+                "Context tokens",
+                type=click.IntRange(min=1024),
+                default=32768 if profile == "coding" else 16384,
+            )
+            ctx.invoke(
+                plan,
+                model=model,
+                profile=profile,
+                context=context,
+                quant=None,
+                opt_in=True,
+                memory_mode="auto",
+                allow_oversize=False,
+                save_as=None,
+                as_json=False,
+            )
+            return profile, None
+
+
+def _environment_actions(ctx: click.Context) -> None:
+    actions = [
+        "Set up or update inference engines",
+        "Run hardware doctor",
+        "Back to main menu",
+    ]
+    while True:
+        action = select_menu(actions, title="Environment")
+        if action is None or action == 2:
+            return
+        if action == 0 and click.confirm(
+            "Install or update recommended engines?", default=True
+        ):
+            ctx.invoke(setup, engines=(), dry_run=False)
+        elif action == 1:
+            ctx.invoke(doctor)
+
+
+def _preset_actions(
+    ctx: click.Context,
+    *,
+    profile: str,
+) -> tuple[str, str | None]:
+    actions = [
+        "Load a saved preset",
+        "Save current configuration as a preset",
+        "List saved presets",
+        "Back to main menu",
+    ]
+    while True:
+        action = select_menu(actions, title="Presets")
+        if action is None or action == 3:
+            return profile, (load_plan() or {}).get("preset_name")
+        if action == 0:
+            loaded = _choose_preset()
+            if loaded:
+                return loaded
+        elif action == 1:
+            name = click.prompt("Preset name", type=str)
+            ctx.invoke(
+                preset_save,
+                name=name,
+                profile=profile,
+                host=None,
+                port=None,
+                run_name="default",
+            )
+        elif action == 2:
+            ctx.invoke(preset_list)
+
+
+def _startup_state(ctx: click.Context) -> tuple[str, str | None] | None:
+    plan_data = load_plan()
+    selected = (plan_data or {}).get("selected")
+    active_selected = selected if isinstance(selected, dict) else None
+    has_active = active_selected is not None
+    presets = list_presets()
+    if not has_active and not presets:
+        ctx.invoke(doctor)
+        return _wizard_suggest(ctx), None
+
+    echo_heading("Welcome back")
+    if active_selected is not None:
+        echo_kv("active", _selected_label(active_selected), value_role="success")
+        echo_kv("profile", (plan_data or {}).get("profile") or "coding")
+    if presets:
+        echo_kv("saved presets", len(presets), value_role="accent")
+
+    options: list[str] = []
+    actions: list[str] = []
+    if active_selected is not None:
+        options.append(f"Continue with {_selected_label(active_selected)}")
+        actions.append("continue")
+    if presets:
+        options.append("Load a saved preset")
+        actions.append("preset")
+    options.extend(
+        [
+            "Open main menu",
+            "Start a new guided setup",
+            "Exit Rondine",
+        ]
+    )
+    actions.extend(["menu", "new", "exit"])
+    index = select_menu(options, title="Resume your work")
+    if index is None or actions[index] == "exit":
+        return None
+    if actions[index] == "preset":
+        return _choose_preset()
+    if actions[index] == "new":
+        ctx.invoke(doctor)
+        return _wizard_suggest(ctx), None
+    return (
+        str((plan_data or {}).get("profile") or "coding"),
+        (plan_data or {}).get("preset_name"),
+    )
+
+
+def _interactive_cli(ctx: click.Context) -> None:
+    """Run the guided no-argument Rondine experience."""
+    echo_heading("Rondine interactive")
+    click.echo(styled("Local models, without the guesswork", "muted"))
+    click.echo()
+    startup = _startup_state(ctx)
+    if startup is None:
+        echo_success("Goodbye from Rondine")
+        return
+    profile, preset_name = startup
+
+    actions = [
+        "Run selected model — preview, download, start, verify",
+        "Choose or change model — recommendations, catalog, Hub",
+        "Environment — engines and hardware",
+        "Presets — load, save, list",
+        "Show current configuration",
+        "Exit Rondine",
+    ]
+    while True:
+        action = select_menu(actions, title="Main menu")
+        if action is None or action == 5:
+            echo_success("Goodbye from Rondine")
+            return
+        try:
+            if action == 0:
+                _model_actions(
+                    ctx,
+                    profile=profile,
+                    preset_name=preset_name,
+                )
+            elif action == 1:
+                profile, preset_name = _change_model_actions(
+                    ctx,
+                    profile=profile,
+                    preset_name=preset_name,
+                )
+            elif action == 2:
+                _environment_actions(ctx)
+            elif action == 3:
+                profile, preset_name = _preset_actions(
+                    ctx,
+                    profile=profile,
+                )
+            elif action == 4:
+                _show_current_config()
+        except click.ClickException as exc:
+            echo_warning(exc.format_message())
+        except (OSError, ValueError) as exc:
+            echo_warning(str(exc))
+        except SystemExit as exc:
+            if exc.code:
+                echo_warning(f"command exited with status {exc.code}")
+        except click.Abort:
+            echo_note("action cancelled")
 
 
 if __name__ == "__main__":  # pragma: no cover

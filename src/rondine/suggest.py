@@ -104,6 +104,7 @@ def _hub_suggestions(
     target_template: str | None,
     existing_repos: set[str],
     limit: int,
+    context_override: int | None,
 ) -> list[Suggestion]:
     engine = (
         cast(EngineHint, preferred_engine)
@@ -127,8 +128,22 @@ def _hub_suggestions(
         except Exception:
             continue
         family = infer_model_family(hit.repo_id, families) or ""
+        family_max_context = max(
+            (
+                model.max_context
+                for model in catalog.models
+                if model.family == family
+            ),
+            default=0,
+        )
+        if (
+            context_override is not None
+            and family_max_context
+            and context_override > family_max_context
+        ):
+            continue
         settings = profile_settings(catalog, profile, family)
-        context = int(settings.get("context", 32768))
+        context = int(context_override or settings.get("context", 32768))
         sampling = {
             k: v for k, v in settings.items() if k not in {"context", "description"}
         }
@@ -157,6 +172,18 @@ def _hub_suggestions(
         reasons = [
             f"Hugging Face search match for {query!r}",
             f"{hit.downloads:,} Hub downloads",
+            *(
+                [
+                    f"requested context: {context_override:,} tokens"
+                    + (
+                        f" (known {family} capability: {family_max_context:,})"
+                        if family_max_context
+                        else " (Hub capability not independently verified)"
+                    )
+                ]
+                if context_override is not None
+                else []
+            ),
             *selected.get("reasons", []),
         ]
         selected["score"] = round(score, 2)
@@ -205,6 +232,7 @@ def suggest_for_hardware(
     include_opt_in: bool = False,
     include_hub: bool = False,
     hub_query: str | None = None,
+    context_override: int | None = None,
 ) -> SuggestResult:
     """Rank fitting catalog and optional Hub configs for this machine."""
     from rondine.planner import engine_order
@@ -223,11 +251,17 @@ def suggest_for_hardware(
         None,
         profile=profile,
         include_opt_in=include_opt_in,
+        context_override=context_override,
     )
 
     # Boost candidates that match the hardware target's suggested model ids.
     suggested_ids = set(target.suggested_models if target else [])
-    viable = [c for c in result.candidates if not c.rejected]
+    viable = [
+        c
+        for c in result.candidates
+        if not c.rejected
+        and (context_override is None or c.context >= context_override)
+    ]
     for cand in viable:
         if cand.model_id in suggested_ids:
             cand.score += 40
@@ -255,9 +289,17 @@ def suggest_for_hardware(
             if mid in seen:
                 continue
             explicit = plan_model(
-                catalog, hw, mid, profile=profile, include_opt_in=True
+                catalog,
+                hw,
+                mid,
+                profile=profile,
+                include_opt_in=True,
+                context_override=context_override,
             )
-            if explicit.selected is None:
+            if explicit.selected is None or (
+                context_override is not None
+                and explicit.selected.context < context_override
+            ):
                 continue
             seen.add(mid)
             picked.append(explicit.selected)
@@ -316,6 +358,7 @@ def suggest_for_hardware(
                 target_template=template_layer,
                 existing_repos=existing_repos,
                 limit=hub_slots,
+                context_override=context_override,
             )
         except Exception as exc:
             hub_suggestions = []
@@ -342,6 +385,11 @@ def suggest_for_hardware(
             )
     if target and target.notes:
         notes.append(target.notes)
+    if context_override is not None:
+        notes.append(
+            f"required context: {context_override:,} tokens; "
+            "catalog models below this capability were excluded"
+        )
     if missing:
         notes.append(
             "install missing engines with: rondine setup — "

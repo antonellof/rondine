@@ -39,11 +39,15 @@ Observed decode rates were 64.4, 66.6, and 66.7 tokens/second, with a median of
 Start and verify the curated small model:
 
 ```bash
-rondine plan qwen2.5-coder-3b --context 4096 --save-as small-coder
+rondine plan qwen2.5-coder-3b --context 32768 --save-as small-coder
 rondine pull qwen2.5-coder-3b
 rondine serve --preset small-coder
 rondine verify --name small-coder
 ```
+
+This uses the recorded 32K server context. For a low-memory smoke test rather
+than benchmark reproduction, use `--context 4096`. The preset name also becomes
+the managed run name used by `verify` and `stop`.
 
 Send a benchmark request:
 

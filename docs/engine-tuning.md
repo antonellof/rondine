@@ -53,9 +53,10 @@ practical inference budget when estimating by hand.
 
 - `resident` requires the full supported estimate to fit VRAM or unified memory.
 - `hybrid` is for llama.cpp GGUFs on discrete CUDA hosts. Rondine combines RAM
-  and VRAM for capacity, emits `--n-gpu-layers auto --fit`, and uses
-  `--cpu-moe` for MoE models. Placement is still controlled by llama.cpp, so the
-  combined estimate is approximate.
+  and VRAM for capacity, emits auto-fit GPU-layer settings, and uses `--cpu-moe`
+  for MoE models. Review the exact resolved flags in `rondine suggest` or
+  `rondine plan`; placement is still controlled by llama.cpp, so the combined
+  estimate is approximate.
 - `mmap` is an explicit experimental mode for a GGUF larger than physical
   memory. It keeps mmap enabled, disables mlock, uses one slot and q4_1 KV, and
   requires `--allow-oversize`. A non-fitting mmap plan remains marked

@@ -72,6 +72,20 @@ def test_suggest_cuda_24() -> None:
     assert "batch_size" in result.suggestions[0].engine_args
 
 
+def test_suggest_uses_context_as_strict_fit_requirement() -> None:
+    result = suggest_for_hardware(
+        load_catalog(),
+        _hw(ram=128),
+        profile="coding",
+        limit=5,
+        context_override=65536,
+    )
+
+    assert result.suggestions
+    assert all(suggestion.context >= 65536 for suggestion in result.suggestions)
+    assert any("required context: 65,536" in note for note in result.notes)
+
+
 def test_resolve_engine_args_merges_layers() -> None:
     catalog = load_catalog()
     args = resolve_engine_args(

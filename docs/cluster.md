@@ -33,3 +33,16 @@ rondine cluster plan sparks --engine vllm --model-repo unsloth/Qwen3.6-35B-A3B-N
 ```
 
 Follow NVIDIA connect-two-sparks + Ray multi-node serving. Pin NCCL to ConnectX RoCE interfaces before serving.
+
+## Serve workflow
+
+`cluster serve` validates the inventory and prints the same upstream commands
+as `cluster plan`. It is dry-run only by default:
+
+```bash
+rondine cluster serve sparks --engine vllm \
+  --model-repo unsloth/Qwen3.6-35B-A3B-NVFP4-Fast
+```
+
+Rondine intentionally refuses unsupervised remote orchestration, including with
+`--no-dry-run`. Review and run the printed commands on the appropriate nodes.
