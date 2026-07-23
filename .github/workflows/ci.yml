@@ -35,3 +35,24 @@ jobs:
         run: |
           uv run rondine plan qwen2.5-coder-3b --profile coding
           uv run rondine serve qwen2.5-coder-3b --profile coding --dry-run
+      - name: Installer syntax checks
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          bash -n install.sh
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck -x install.sh
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq shellcheck
+            shellcheck -x install.sh
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path("install.ps1").read_text(encoding="utf-8")
+          assert "Install-Rondine" in text
+          assert "WSL" in text
+          assert "rondine.dev" in text
+          print("install.ps1 basic checks OK")
+          PY
+          test -x install.sh

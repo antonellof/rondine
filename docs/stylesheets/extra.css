@@ -1,0 +1,21 @@
+/* Rondine docs branding */
+.md-header {
+  backdrop-filter: saturate(180%) blur(8px);
+}
+
+.md-typeset h1 {
+  font-weight: 700;
+}
+
+.md-typeset .tabbed-set {
+  margin-top: 0.75em;
+}
+
+.md-typeset img[alt*="demo"] {
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.md-typeset code {
+  word-break: break-word;
+}

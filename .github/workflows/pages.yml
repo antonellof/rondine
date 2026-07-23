@@ -1,0 +1,62 @@
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install MkDocs Material
+        run: pip install "mkdocs-material>=9.5"
+
+      - name: Stage media assets
+        run: |
+          set -euo pipefail
+          mkdir -p docs/media
+          cp assets/rondine-swallow.png docs/media/
+          cp assets/rondine-demo.gif docs/media/
+
+      - name: Build site
+        run: mkdocs build --strict
+
+      - name: Publish installer scripts and CNAME at site root
+        run: |
+          set -euo pipefail
+          cp install.sh install.ps1 CNAME site/
+          chmod 644 site/install.sh site/install.ps1 site/CNAME
+          # Ensure curl | sh works even when the host serves text/plain.
+          printf '\n' >> site/install.sh || true
+          ls -la site/install.sh site/install.ps1 site/CNAME
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

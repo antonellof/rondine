@@ -8,6 +8,8 @@ build/
 .mypy_cache/
 .ruff_cache/
 .rondine/
+site/
+docs/media/
 *.gguf
 .DS_Store
 scripts/

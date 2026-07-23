@@ -23,13 +23,34 @@ thin control plane over llama.cpp, MLX-LM, and vLLM—not another inference engi
 
 ## Quick start
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+### Install
+
+```bash
+# macOS / Linux / WSL
+curl -LsSf https://rondine.dev/install.sh | sh
+```
+
+```powershell
+# Windows (installs into WSL2)
+irm https://rondine.dev/install.ps1 | iex
+```
+
+Requires Python 3.11+ (bootstrapped via [uv](https://docs.astral.sh/uv/) when needed).
+The installer verifies the GitHub Release checksum before installing. See
+[install docs](https://rondine.dev/install/) for PATH, updates, uninstall, and
+Windows/WSL notes.
+
+Development install from a clone:
 
 ```bash
 git clone https://github.com/antonellof/rondine.git
 cd rondine
 uv tool install .
+```
 
+### First run
+
+```bash
 # Guided experience; resumes active plans and saved presets on later runs
 rondine
 
@@ -146,12 +167,17 @@ On a 32GB M2 Pro, Qwen2.5-Coder 3B Q4_K_M ran fully on Metal at a median
 
 ## Documentation
 
-- [CLI guide: interactive dashboard, commands, suggest, and memory modes](docs/cli.md)
-- [Coding-client setup](docs/coding.md)
-- [Engine tuning](docs/engine-tuning.md)
-- [Hardware gates](docs/hardware-gates.md)
-- [Cluster setup](docs/cluster.md)
-- [Benchmarks](docs/benchmarks.md)
+Website: [rondine.dev](https://rondine.dev)
+
+- [Install](https://rondine.dev/install/)
+- [CLI guide](https://rondine.dev/cli/)
+- [Coding-client setup](https://rondine.dev/coding/)
+- [Engine tuning](https://rondine.dev/engine-tuning/)
+- [Hardware gates](https://rondine.dev/hardware-gates/)
+- [Cluster setup](https://rondine.dev/cluster/)
+- [Benchmarks](https://rondine.dev/benchmarks/)
+
+Local copies live under [`docs/`](docs/).
 
 
 

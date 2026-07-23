@@ -37,8 +37,10 @@ dev = [
 rondine = "rondine.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/antonellof/rondine"
+Homepage = "https://rondine.dev"
+Documentation = "https://rondine.dev"
 Repository = "https://github.com/antonellof/rondine"
+Issues = "https://github.com/antonellof/rondine/issues"
 
 [tool.hatch.build.targets.wheel]
 only-include = ["rondine"]
@@ -55,6 +57,9 @@ dev = [
   "ruff>=0.9",
   "mypy>=1.14",
   "types-requests",
+]
+docs = [
+  "mkdocs-material>=9.5",
 ]
 
 [tool.hatch.build.targets.sdist]
