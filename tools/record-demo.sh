@@ -19,6 +19,7 @@ asciinema record \
 
 python - "$raw_cast" "$cast" <<'PY'
 import json
+import re
 import sys
 
 source, destination = sys.argv[1:]
@@ -26,11 +27,17 @@ with open(source, encoding="utf-8") as handle:
     lines = handle.readlines()
 
 events = [json.loads(line) for line in lines[1:]]
+ansi = r"\x1b\[[0-?]*[ -/]*[@-~]"
+host_line = re.compile(
+    rf"(?m)^(?:{ansi})*[ \t]*host:(?:{ansi})*[^\r\n]*(?:\r+\n)?"
+)
 offset = events[0][0] if events else 0.0
 for event in events:
     event[0] = max(0.0, event[0] - offset)
     if event[0] < 0.32:
         event[0] = 0.0
+    if event[1] == "o":
+        event[2] = host_line.sub("", event[2])
 
 with open(destination, "w", encoding="utf-8") as handle:
     handle.write(lines[0])
