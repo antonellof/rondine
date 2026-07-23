@@ -108,6 +108,8 @@ Select the workload profile described above. Default: `coding`.
 `--limit INTEGER`
 
 Set the maximum number of ranked configurations to display. Default: `5`.
+In interactive selection, choose **Show more recommendations** to increase the
+same search by five results at a time, up to 50 or until results are exhausted.
 
 ```bash
 rondine suggest --limit 10

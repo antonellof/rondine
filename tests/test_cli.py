@@ -426,6 +426,41 @@ def test_cli_suggest_interactive_selects_and_configures(
     assert plan["selected"]["model_id"] == expected.model_id
 
 
+def test_cli_suggest_interactive_can_show_more(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "rondine.cli.detect_hardware",
+        lambda: HardwareInfo(
+            platform="darwin",
+            arch="arm64",
+            hostname="test",
+            ram_gb=48.0,
+            is_apple_silicon=True,
+            metal_available=True,
+            disk_free_gb=300.0,
+        ),
+    )
+    menus: list[list[str]] = []
+
+    def choose(options: list[str], title: str | None = None) -> int:
+        menus.append(options)
+        return len(options) - 1 if len(menus) == 1 else 0
+
+    monkeypatch.setattr("rondine.cli.select_menu", choose)
+    result = CliRunner().invoke(
+        main,
+        ["suggest", "--interactive", "--limit", "3", "--no-hub"],
+    )
+
+    assert result.exit_code == 0
+    assert menus[0][-1] == "Show more recommendations — up to 8 results"
+    assert len(menus[1]) > len(menus[0])
+    assert "Expanding recommendations to 8" in result.output
+    assert (tmp_path / "plans" / "last.json").is_file()
+
+
 def test_cli_suggest_context_changes_planned_window(
     tmp_path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]

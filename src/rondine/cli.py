@@ -620,9 +620,32 @@ def suggest(
             f"~{s.estimate['total_gb']}GB"
             for s in result.suggestions
         ]
+        can_show_more = len(result.suggestions) >= limit and limit < 50
+        if can_show_more:
+            next_limit = min(limit + 5, 50)
+            labels.append(
+                f"Show more recommendations — up to {next_limit} results"
+            )
         selected_index = select_menu(labels)
         if selected_index is None:
             echo_note("selection cancelled; no plan was changed")
+            return
+        if can_show_more and selected_index == len(result.suggestions):
+            echo_heading(f"Expanding recommendations to {next_limit}")
+            click.get_current_context().invoke(
+                suggest,
+                profile=profile,
+                limit=next_limit,
+                opt_in=opt_in,
+                hub=hub,
+                hub_query=hub_query,
+                context=context,
+                as_json=False,
+                interactive=True,
+                no_interactive=False,
+                configure_rank=None,
+                save_as=save_as,
+            )
             return
         configure_rank = result.suggestions[selected_index].rank
 
