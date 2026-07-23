@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rondine"
-version = "0.1.0"
+version = "0.1.1"
 description = "Hardware-aware local LLM launcher with optimized configs for Mac, NVIDIA GPUs, and DGX Spark"
 readme = "README.md"
 license = "Apache-2.0"

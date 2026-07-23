@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.1.1
+
+- Add platform-specific engine installation guidance when no runnable engine is detected
+- Make `rondine setup` automatically select and verify engines compatible with the host
+- Refuse to start `rondine serve` when the selected engine is missing or incompatible
+- Detect Rondine-managed llama.cpp, MLX-LM, and vLLM installations
+- Improve setup error reporting and document the engine installation workflow
+
 ## 0.1.0
 
 - Initial Rondine control-plane CLI (Python 3.11+)
