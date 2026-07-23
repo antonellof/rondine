@@ -10,20 +10,18 @@ copyright: Apache-2.0. Model weights retain their upstream licenses.
 theme:
   name: material
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: teal
-      accent: amber
-      toggle:
-        icon: material/weather-night
-        name: Switch to dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
-      primary: teal
-      accent: amber
+    - scheme: slate
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-sunny
         name: Switch to light mode
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
   features:
     - navigation.instant
     - navigation.sections
@@ -33,8 +31,8 @@ theme:
     - search.highlight
     - content.code.copy
     - toc.follow
-  logo: media/rondine-swallow.png
-  favicon: media/rondine-swallow.png
+  logo: media/rondine-swallow.svg
+  favicon: media/rondine-swallow.svg
   icon:
     repo: fontawesome/brands/github
 

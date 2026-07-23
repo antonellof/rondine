@@ -32,6 +32,7 @@ jobs:
           set -euo pipefail
           mkdir -p docs/media
           cp assets/rondine-swallow.png docs/media/
+          cp assets/rondine-swallow.svg docs/media/
           cp assets/rondine-demo.gif docs/media/
 
       - name: Build site

@@ -10,9 +10,6 @@ build/
 .rondine/
 site/
 docs/media/
-!docs/media/
-docs/media/*
-!docs/media/rondine-swallow.png
 *.gguf
 .DS_Store
 scripts/

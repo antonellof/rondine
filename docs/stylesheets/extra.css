@@ -1,6 +1,58 @@
 /* Rondine docs branding */
+:root > * {
+  --md-primary-fg-color: #0f172a;
+  --md-primary-fg-color--light: #1e293b;
+  --md-primary-fg-color--dark: #020617;
+  --md-accent-fg-color: #2563eb;
+}
+
+[data-md-color-scheme="default"] {
+  --md-default-bg-color: #f8fafc;
+  --md-typeset-a-color: #2563eb;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-hue: 220;
+  --md-primary-fg-color: #070d1a;
+  --md-primary-fg-color--light: #111c31;
+  --md-primary-fg-color--dark: #020617;
+  --md-accent-fg-color: #60a5fa;
+  --md-typeset-a-color: #60a5fa;
+}
+
 .md-header {
+  color: #0f172a;
+  background-color: rgba(248, 250, 252, 0.88);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: none;
   backdrop-filter: saturate(180%) blur(8px);
+  -webkit-backdrop-filter: saturate(180%) blur(8px);
+}
+
+[data-md-color-scheme="slate"] .md-header {
+  color: #f8fafc;
+  background-color: rgba(7, 13, 26, 0.88);
+  border-bottom-color: rgba(148, 163, 184, 0.14);
+}
+
+.md-header__title {
+  letter-spacing: -0.015em;
+}
+
+[data-md-color-scheme="default"] .md-search__form {
+  background-color: rgba(226, 232, 240, 0.72);
+}
+
+[data-md-color-scheme="slate"] .md-search__form {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.md-header__button.md-logo img {
+  filter: brightness(0);
+}
+
+[data-md-color-scheme="slate"] .md-header__button.md-logo img {
+  filter: brightness(0) invert(1);
 }
 
 .md-typeset h1 {
