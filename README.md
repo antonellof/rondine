@@ -75,7 +75,7 @@ models discovered through the Hugging Face API by default; use `--no-hub` for
 catalog-only results or `--hub-query TEXT` to customize discovery. Cards are
 marked `TOP` (hardware-target pick), `HUB` (live discovery), or `CAT` (catalog).
 
-![Rondine interactive doctor, model selection, and dashboard demo](assets/rondine-demo.gif)
+![Rondine interactive doctor, model selection, and dashboard demo](assets/rondine-demo.gif?v=20260723)
 
 ### Small-model smoke test
 

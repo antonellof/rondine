@@ -6,7 +6,7 @@ Rondine detects RAM and VRAM, recommends models that fit, applies tuned engine
 settings, downloads the weights, and starts an OpenAI-compatible server. It is a
 thin control plane over llama.cpp, MLX-LM, and vLLM—not another inference engine.
 
-![Rondine interactive doctor, model selection, and dashboard demo](media/rondine-demo.gif)
+![Rondine interactive doctor, model selection, and dashboard demo](media/rondine-demo.gif?v=20260723)
 
 ## Quick install
 
