@@ -5,8 +5,9 @@ This guide explains the choices that affect model recommendations.
 
 ## Suggest
 
-`rondine suggest` detects the current machine and ranks curated model, format,
-quantization, and engine combinations that fit its available memory.
+`rondine suggest` detects the current machine, ranks curated configurations, and
+supplements them with current Hugging Face search results that fit its available
+memory. Hub failures are non-fatal: the command falls back to the catalog.
 
 ```bash
 rondine suggest --profile coding
@@ -54,6 +55,26 @@ planner's memory checks. Default: `--no-opt-in`.
 
 ```bash
 rondine suggest --opt-in
+```
+
+`--hub` / `--no-hub`
+
+Search Hugging Face and inspect the leading results before merging fitting
+repositories into the recommendations. This is enabled by default. Use
+`--no-hub` for an offline, deterministic catalog-only result.
+
+```bash
+rondine suggest --no-hub
+```
+
+`--hub-query TEXT`
+
+Override the Hub search text. The default is `coder` for the coding profile and
+`instruct` for the chat profile. Rondine still filters toward the preferred
+engine and rejects repositories that do not fit the detected hardware.
+
+```bash
+rondine suggest --hub-query "Qwen coder"
 ```
 
 `--json`

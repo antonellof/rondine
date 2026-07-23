@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
+
+from rondine.catalog import Catalog
+from rondine.detect import HardwareInfo
+from rondine.planner import available_memory_gb
 
 EngineHint = Literal["llama.cpp", "mlx", "vllm", "unknown"]
 
@@ -161,6 +166,26 @@ def detect_quant(name: str) -> str | None:
         if match:
             return match.group(1)
     return None
+
+
+def infer_model_family(repo_id: str, families: Iterable[str]) -> str | None:
+    """Match a Hub repo name to a catalog profile family."""
+    normalized_repo = re.sub(r"[^a-z0-9]", "", repo_id.lower())
+    matches = [
+        family
+        for family in families
+        if re.sub(r"[^a-z0-9]", "", family.lower()) in normalized_repo
+    ]
+    return max(matches, key=len) if matches else None
+
+
+def infer_active_params_b(repo_id: str) -> float | None:
+    """Infer active parameter billions from common Hub repository names."""
+    active = re.search(r"a(\d+(?:\.\d+)?)b(?!it)", repo_id, re.IGNORECASE)
+    if active:
+        return float(active.group(1))
+    totals = re.findall(r"(\d+(?:\.\d+)?)b(?!it)", repo_id, re.IGNORECASE)
+    return float(totals[-1]) if totals else None
 
 
 def _org_bonus(repo_id: str) -> float:
@@ -363,3 +388,111 @@ def curated_repo_ids(catalog_models: list[Any]) -> set[str]:
         for variant in getattr(model, "variants", []):
             repos.add(variant.repo)
     return repos
+
+
+def apply_hub_hardware_budget(
+    selected: dict[str, Any],
+    catalog: Catalog,
+    hw: HardwareInfo,
+    *,
+    memory_mode: str = "auto",
+    allow_oversize: bool = False,
+) -> tuple[float, str]:
+    """Recalculate a Hub plan against this host's usable memory."""
+    if memory_mode == "mmap" and not allow_oversize:
+        raise ValueError("--memory-mode mmap requires --allow-oversize")
+    available_gb, reserve_gb = available_memory_gb(catalog, hw)
+    estimate = selected["estimate"]
+    weight_gb = float(estimate["weight_gb"])
+    activation_gb = float(estimate["activation_gb"])
+    kv_gb = float(estimate.get("kv_gb") or 0.0)
+    active_params_b = infer_active_params_b(str(selected.get("repo") or ""))
+    context = int(selected.get("context") or 0)
+    if kv_gb <= 0 and active_params_b and context > 0:
+        kv_gb = round(
+            context * active_params_b * catalog.policy.kv_bytes_per_token_per_b,
+            2,
+        )
+        estimate["kv_gb"] = kv_gb
+        selected.setdefault("reasons", []).append(
+            f"estimated KV cache from ~{active_params_b:g}B active parameters"
+        )
+    total_gb = round(weight_gb + activation_gb + kv_gb + reserve_gb, 2)
+    resident_fits = available_gb >= total_gb
+    mode = "resident"
+    if (
+        memory_mode == "hybrid"
+        or (
+            memory_mode == "auto"
+            and not resident_fits
+            and hw.is_discrete_cuda
+            and selected.get("engine") == "llama.cpp"
+            and selected.get("format") == "gguf"
+        )
+    ):
+        if (
+            not hw.is_discrete_cuda
+            or selected.get("engine") != "llama.cpp"
+            or selected.get("format") != "gguf"
+        ):
+            raise ValueError(
+                "hybrid mode requires llama.cpp GGUF on a discrete CUDA host"
+            )
+        mode = "hybrid"
+        available_gb = hw.ram_gb + hw.vram_gb
+        reserve_gb = catalog.policy.os_reserve_gb + catalog.policy.vram_reserve_gb
+        total_gb = round(weight_gb + activation_gb + kv_gb + reserve_gb, 2)
+        selected["engine_args"] = {
+            **dict(selected.get("engine_args") or {}),
+            "n_gpu_layers": "auto",
+            "fit": True,
+            "fit_target": 1536,
+            "mmap": True,
+            "mlock": False,
+        }
+    elif memory_mode == "mmap":
+        if selected.get("engine") != "llama.cpp" or selected.get("format") != "gguf":
+            raise ValueError("mmap mode requires a llama.cpp GGUF repo")
+        mode = "mmap"
+        selected["experimental"] = True
+        selected["warnings"] = [
+            "experimental SSD demand paging; likely unusably slow and not a supported fit"
+        ]
+        selected["engine_args"] = {
+            **dict(selected.get("engine_args") or {}),
+            "n_gpu_layers": 0 if hw.is_apple_silicon else "auto",
+            "fit": not hw.is_apple_silicon,
+            "fit_target": 2048,
+            "mmap": True,
+            "mlock": False,
+            "parallel": 1,
+            "batch_size": 128,
+            "ubatch_size": 64,
+            "cache_type_k": "q4_1",
+            "cache_type_v": "q4_1",
+        }
+    disk_required = round(weight_gb * 1.05, 2)
+    estimate.update(
+        {
+            "os_reserve_gb": round(reserve_gb, 2),
+            "total_gb": total_gb,
+            "available_gb": available_gb,
+            "headroom_gb": round(available_gb - total_gb, 2),
+            "fits": available_gb >= total_gb,
+            "memory_mode": mode,
+            "experimental": mode == "mmap",
+            "resident_shortfall_gb": round(max(0.0, total_gb - available_gb), 2),
+            "disk_required_gb": disk_required,
+            "disk_available_gb": hw.disk_free_gb,
+        }
+    )
+    selected["memory_mode"] = mode
+    if mode == "mmap" and hw.disk_free_gb < disk_required:
+        raise ValueError(
+            f"insufficient disk: need ~{disk_required:.0f}GB free, "
+            f"have {hw.disk_free_gb:.0f}GB"
+        )
+    unit = "VRAM" if hw.is_discrete_cuda else "RAM"
+    if mode == "hybrid":
+        unit = "combined RAM+VRAM"
+    return total_gb, unit

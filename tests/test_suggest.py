@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from rondine.catalog import load_catalog, resolve_engine_args
 from rondine.detect import EngineStatus, HardwareInfo
+from rondine.hub import HubFile, HubInspectResult, HubModelHit
 from rondine.suggest import suggest_for_hardware
 
 
@@ -94,3 +95,68 @@ def test_mlx_template_enables_fast_synch() -> None:
     catalog = load_catalog()
     args = resolve_engine_args(catalog, "mlx", profile="coding", target_template="mac")
     assert args.get("metal_fast_synch") is True
+
+
+def test_suggest_supplements_catalog_with_fitting_hub_result(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    catalog = load_catalog()
+
+    def fake_search(query: str, **kwargs: object) -> list[HubModelHit]:
+        assert query == "coder"
+        assert kwargs["engine"] == "mlx"
+        return [
+            HubModelHit(
+                repo_id="mlx-community/new-coder-7b-4bit",
+                downloads=12_000,
+                engine_hint="mlx",
+                format_hint="mlx",
+                score=24.0,
+            )
+        ]
+
+    def fake_inspect(repo_id: str) -> HubInspectResult:
+        assert repo_id == "mlx-community/new-coder-7b-4bit"
+        return HubInspectResult(
+            repo_id=repo_id,
+            engine_hint="mlx",
+            format_hint="mlx",
+            files=[HubFile("weights-4bit.npz", 4.0, quant="4bit")],
+            recommended_quant="4bit",
+            recommended_file="weights-4bit.npz",
+            weight_gb=4.0,
+            notes=["engine hint: mlx / format: mlx"],
+        )
+
+    monkeypatch.setattr("rondine.suggest.search_hub", fake_search)
+    monkeypatch.setattr("rondine.suggest.inspect_repo", fake_inspect)
+
+    result = suggest_for_hardware(
+        catalog,
+        _hw(ram=32),
+        profile="coding",
+        limit=3,
+        include_hub=True,
+    )
+
+    hub = next(s for s in result.suggestions if s.source == "huggingface")
+    assert hub.repo == "mlx-community/new-coder-7b-4bit"
+    assert hub.estimate["fits"] is True
+    assert hub.selected["variant"]["hub"] is True
+    assert hub.next_steps[0].startswith("rondine plan mlx-community/")
+    assert len(result.suggestions) == 3
+
+
+def test_suggest_falls_back_when_hub_search_fails(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    def unavailable(*args: object, **kwargs: object) -> list[HubModelHit]:
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr("rondine.suggest.search_hub", unavailable)
+    result = suggest_for_hardware(
+        load_catalog(),
+        _hw(ram=32),
+        limit=3,
+        include_hub=True,
+    )
+
+    assert result.suggestions
+    assert all(s.source == "catalog" for s in result.suggestions)
+    assert any("search unavailable" in note for note in result.notes)

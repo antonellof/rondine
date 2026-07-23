@@ -19,9 +19,15 @@ from rondine.engines.base import EngineAdapter
 from rondine.engines.llama_cpp import LlamaCppAdapter
 from rondine.engines.mlx import MlxAdapter
 from rondine.engines.vllm import VllmAdapter
-from rondine.hub import curated_repo_ids, inspect_repo, search_hub
+from rondine.hub import (
+    apply_hub_hardware_budget,
+    curated_repo_ids,
+    infer_model_family,
+    inspect_repo,
+    search_hub,
+)
 from rondine.paths import brand_logo, plans_dir
-from rondine.planner import available_memory_gb, load_plan, plan_model, save_plan
+from rondine.planner import load_plan, plan_model, save_plan
 from rondine.presets import (
     delete_preset,
     list_presets,
@@ -32,7 +38,15 @@ from rondine.presets import (
 )
 from rondine.process import is_running, load_record, start_server, stop_server
 from rondine.suggest import suggest_for_hardware
-from rondine.ux import spinner
+from rondine.ux import (
+    echo_heading,
+    echo_kv,
+    echo_note,
+    echo_success,
+    echo_warning,
+    spinner,
+    styled,
+)
 from rondine.verify import verify_server
 
 ADAPTERS: dict[str, EngineAdapter] = {
@@ -54,25 +68,29 @@ def _format_logo(width: int | None = None) -> str:
 
 
 def _echo_logo() -> None:
-    click.echo(_format_logo())
+    click.echo(styled(_format_logo(), "heading", bold=True))
     click.echo()
 
 
 def _print_estimate(est: dict[str, Any]) -> None:
+    total = styled(f"{est['total_gb']} GB", "accent", bold=True)
+    headroom = styled(f"{est['headroom_gb']} GB", "success")
     click.echo(
-        f"  memory est: {est['total_gb']} GB "
+        f"  {styled('memory:', 'label', bold=True)} "
+        f"{total} "
         f"(weights {est['weight_gb']} + kv {est['kv_gb']} + "
         f"act {est['activation_gb']} + os {est['os_reserve_gb']}) "
-        f"| available {est['available_gb']} GB | headroom {est['headroom_gb']} GB"
+        f"| available {est['available_gb']} GB | "
+        f"headroom {headroom}"
     )
 
 
 def _print_engine_args(args: dict[str, Any], indent: str = "  ") -> None:
     if not args:
         return
-    click.echo(f"{indent}engine config:")
+    click.echo(f"{indent}{styled('engine config:', 'label', bold=True)}")
     for key, value in sorted(args.items()):
-        click.echo(f"{indent}  {key}: {value}")
+        click.echo(f"{indent}  {styled(key + ':', 'muted')} {value}")
 
 
 def _print_hybrid_unavailable_guidance(hw: Any) -> None:
@@ -153,93 +171,17 @@ def _apply_hub_hardware_budget(
     memory_mode: str = "auto",
     allow_oversize: bool = False,
 ) -> tuple[float, str]:
-    """Recalculate a Hub plan and apply an explicit memory strategy."""
-    if memory_mode == "mmap" and not allow_oversize:
-        raise click.ClickException("--memory-mode mmap requires --allow-oversize")
-    available_gb, reserve_gb = available_memory_gb(catalog, hw)
-    estimate = selected["estimate"]
-    weight_gb = float(estimate["weight_gb"])
-    activation_gb = float(estimate["activation_gb"])
-    kv_gb = float(estimate.get("kv_gb") or 0.0)
-    total_gb = round(weight_gb + activation_gb + kv_gb + reserve_gb, 2)
-    resident_fits = available_gb >= total_gb
-    mode = "resident"
-    if (
-        memory_mode == "hybrid"
-        or (
-            memory_mode == "auto"
-            and not resident_fits
-            and hw.is_discrete_cuda
-            and selected.get("engine") == "llama.cpp"
-            and selected.get("format") == "gguf"
+    """CLI-compatible wrapper around the reusable Hub memory calculator."""
+    try:
+        return apply_hub_hardware_budget(
+            selected,
+            catalog,
+            hw,
+            memory_mode=memory_mode,
+            allow_oversize=allow_oversize,
         )
-    ):
-        if (
-            not hw.is_discrete_cuda
-            or selected.get("engine") != "llama.cpp"
-            or selected.get("format") != "gguf"
-        ):
-            raise click.ClickException(
-                "hybrid mode requires llama.cpp GGUF on a discrete CUDA host"
-            )
-        mode = "hybrid"
-        available_gb = hw.ram_gb + hw.vram_gb
-        reserve_gb = catalog.policy.os_reserve_gb + catalog.policy.vram_reserve_gb
-        total_gb = round(weight_gb + activation_gb + kv_gb + reserve_gb, 2)
-        selected["engine_args"] = {
-            **dict(selected.get("engine_args") or {}),
-            "n_gpu_layers": "auto",
-            "fit": True,
-            "fit_target": 1536,
-            "mmap": True,
-            "mlock": False,
-        }
-    elif memory_mode == "mmap":
-        if selected.get("engine") != "llama.cpp" or selected.get("format") != "gguf":
-            raise click.ClickException("mmap mode requires a llama.cpp GGUF repo")
-        mode = "mmap"
-        selected["experimental"] = True
-        selected["warnings"] = [
-            "experimental SSD demand paging; likely unusably slow and not a supported fit"
-        ]
-        selected["engine_args"] = {
-            **dict(selected.get("engine_args") or {}),
-            "n_gpu_layers": 0 if hw.is_apple_silicon else "auto",
-            "fit": not hw.is_apple_silicon,
-            "fit_target": 2048,
-            "mmap": True,
-            "mlock": False,
-            "parallel": 1,
-            "batch_size": 128,
-            "ubatch_size": 64,
-            "cache_type_k": "q4_1",
-            "cache_type_v": "q4_1",
-        }
-    disk_required = round(weight_gb * 1.05, 2)
-    estimate.update(
-        {
-            "os_reserve_gb": round(reserve_gb, 2),
-            "total_gb": total_gb,
-            "available_gb": available_gb,
-            "headroom_gb": round(available_gb - total_gb, 2),
-            "fits": available_gb >= total_gb,
-            "memory_mode": mode,
-            "experimental": mode == "mmap",
-            "resident_shortfall_gb": round(max(0.0, total_gb - available_gb), 2),
-            "disk_required_gb": disk_required,
-            "disk_available_gb": hw.disk_free_gb,
-        }
-    )
-    selected["memory_mode"] = mode
-    if mode == "mmap" and hw.disk_free_gb < disk_required:
-        raise click.ClickException(
-            f"insufficient disk: need ~{disk_required:.0f}GB free, "
-            f"have {hw.disk_free_gb:.0f}GB"
-        )
-    unit = "VRAM" if hw.is_discrete_cuda else "RAM"
-    if mode == "hybrid":
-        unit = "combined RAM+VRAM"
-    return total_gb, unit
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _plan_from_hub(
@@ -256,22 +198,9 @@ def _plan_from_hub(
     with spinner(f"inspecting Hub repo {repo}"):
         inspected = inspect_repo(repo, prefer_quant=quant)
     settings: dict[str, Any] = {"context": context or 32768}
-    repo_l = repo.lower().replace("_", "-")
-    family_map = {
-        "qwen3.6": "qwen3.6",
-        "qwen3-6": "qwen3.6",
-        "gemma-4": "gemma-4",
-        "deepseek-v4": "deepseek-v4",
-        "glm-5.2": "glm-5.2",
-        "glm-5-2": "glm-5.2",
-    }
-    for needle, family in family_map.items():
-        if needle in repo_l:
-            try:
-                settings = profile_settings(catalog, profile, family)
-            except KeyError:
-                pass
-            break
+    family = infer_model_family(repo, {model.family for model in catalog.models})
+    if family:
+        settings = profile_settings(catalog, profile, family)
     ctx = int(context or settings.get("context", 32768))
     sampling = {k: v for k, v in settings.items() if k not in {"context", "description"}}
     selected = inspected.to_plan_selected(profile=profile, context=ctx, sampling=sampling)
@@ -396,36 +325,53 @@ def doctor() -> None:
     with spinner("scanning hardware"):
         hw = detect_hardware()
         catalog = load_catalog()
-    click.echo(f"host: {hw.hostname}")
-    click.echo(f"platform: {hw.platform}/{hw.arch}")
-    click.echo(f"cpu: {hw.cpu_brand or '(unknown)'}")
-    click.echo(f"ram: {hw.ram_gb} GB")
-    click.echo(f"disk free: {hw.disk_free_gb} GB / {hw.disk_total_gb} GB")
-    click.echo(f"apple silicon: {hw.is_apple_silicon}")
-    click.echo(f"dgx spark: {hw.is_spark}")
+    echo_heading("Hardware")
+    echo_kv("host", hw.hostname)
+    echo_kv("platform", f"{hw.platform}/{hw.arch}")
+    echo_kv("cpu", hw.cpu_brand or "(unknown)")
+    echo_kv("ram", f"{hw.ram_gb} GB", value_role="accent")
+    echo_kv("disk free", f"{hw.disk_free_gb} GB / {hw.disk_total_gb} GB")
+    echo_kv("apple silicon", hw.is_apple_silicon)
+    echo_kv("dgx spark", hw.is_spark)
     if hw.cuda_available:
         cap = ".".join(str(x) for x in hw.cuda_capability) if hw.cuda_capability else "?"
-        click.echo(f"cuda: yes ({hw.gpu_name or 'gpu'}, compute {cap})")
+        echo_kv(
+            "cuda",
+            f"yes ({hw.gpu_name or 'gpu'}, compute {cap})",
+            value_role="success",
+        )
         if hw.vram_gb:
-            click.echo(f"vram: {hw.vram_gb} GB" + (f" ×{hw.gpu_count}" if hw.gpu_count > 1 else ""))
+            echo_kv(
+                "vram",
+                f"{hw.vram_gb} GB" + (f" ×{hw.gpu_count}" if hw.gpu_count > 1 else ""),
+                value_role="accent",
+            )
         if hw.is_discrete_cuda:
-            click.echo(f"fit budget: {hw.usable_ram_gb} GB VRAM (discrete GPU)")
+            echo_kv("fit budget", f"{hw.usable_ram_gb} GB VRAM (discrete GPU)")
     else:
-        click.echo("cuda: no")
-    click.echo(f"metal: {hw.metal_available}")
-    click.echo("engines:")
+        echo_kv("cuda", "no", value_role="muted")
+    echo_kv("metal", hw.metal_available)
+    echo_heading("Engines")
     for eng in hw.engines:
-        status = "ok" if eng.available else "missing"
+        status = styled(
+            "✓ ready" if eng.available else "○ missing",
+            "success" if eng.available else "warning",
+            bold=eng.available,
+        )
         extra = eng.version or eng.detail or eng.path or ""
-        click.echo(f"  - {eng.name}: {status} {extra}".rstrip())
+        name = styled(f"{eng.name:20}", "label", bold=True)
+        click.echo(f"  {name} {status} {extra}".rstrip())
     from rondine.planner import match_target
 
     target = match_target(catalog, hw)
-    click.echo(f"matched target: {target or '(none)'}")
+    echo_kv("matched target", target or "(none)", value_role="accent")
     for w in hw.warnings:
-        click.echo(f"warning: {w}", err=True)
+        echo_warning(w)
     click.echo()
-    click.echo("next: rondine suggest --profile coding")
+    click.echo(
+        f"{styled('next:', 'label', bold=True)} "
+        f"{styled('rondine suggest --profile coding', 'command')}"
+    )
 
 
 @main.command()
@@ -441,6 +387,18 @@ def doctor() -> None:
     "--opt-in/--no-opt-in",
     default=False,
     help="Include oversized or specialist models excluded from normal recommendations.",
+)
+@click.option(
+    "--hub/--no-hub",
+    default=True,
+    show_default=True,
+    help="Supplement the catalog with fitting models from Hugging Face search.",
+)
+@click.option(
+    "--hub-query",
+    default=None,
+    metavar="TEXT",
+    help="Override the Hugging Face search text (default: coder or instruct).",
 )
 @click.option(
     "--json",
@@ -465,6 +423,8 @@ def suggest(
     profile: str,
     limit: int,
     opt_in: bool,
+    hub: bool,
+    hub_query: str | None,
     as_json: bool,
     configure_rank: int | None,
     save_as: str | None,
@@ -474,7 +434,13 @@ def suggest(
     with spinner("matching models to hardware"):
         hw = detect_hardware()
         result = suggest_for_hardware(
-            catalog, hw, profile=profile, limit=limit, include_opt_in=opt_in
+            catalog,
+            hw,
+            profile=profile,
+            limit=limit,
+            include_opt_in=opt_in,
+            include_hub=hub,
+            hub_query=hub_query,
         )
 
     if as_json:
@@ -482,21 +448,33 @@ def suggest(
         return
 
     _echo_logo()
-    click.echo(f"target: {result.target_id or '(generic)'}  ({result.target_label or 'unmatched'})")
+    echo_heading("Hardware match")
+    echo_kv(
+        "target",
+        f"{result.target_id or '(generic)'} ({result.target_label or 'unmatched'})",
+        value_role="accent",
+    )
     ram = result.hardware.get("ram_gb")
     vram = result.hardware.get("vram_gb")
     if result.hardware.get("is_discrete_cuda") and vram:
-        click.echo(
-            f"vram: {vram} GB  ({result.hardware.get('gpu_name') or 'CUDA'})  "
-            f"system ram: {ram} GB  profile: {profile}"
+        echo_kv(
+            "memory",
+            f"{vram} GB VRAM ({result.hardware.get('gpu_name') or 'CUDA'}), "
+            f"{ram} GB system RAM",
+            value_role="accent",
         )
     else:
-        click.echo(f"ram: {ram} GB  profile: {profile}")
-    click.echo(f"engines: {' → '.join(result.engine_order)}")
+        echo_kv("memory", f"{ram} GB RAM", value_role="accent")
+    echo_kv("profile", profile)
+    echo_kv("engines", " → ".join(result.engine_order))
     if result.preferred_engine:
-        click.echo(f"preferred engine: {result.preferred_engine}")
+        echo_kv("preferred engine", result.preferred_engine, value_role="success")
     if result.missing_engines:
-        click.echo(f"missing engines: {', '.join(result.missing_engines)}")
+        echo_kv(
+            "missing engines",
+            ", ".join(result.missing_engines),
+            value_role="warning",
+        )
     click.echo()
 
     if not result.suggestions:
@@ -505,21 +483,32 @@ def suggest(
             click.echo(f"note: {note}")
         sys.exit(1)
 
-    click.echo("recommended configs:")
+    echo_heading("Recommended configs")
     for s in result.suggestions:
-        star = "*" if s.curated_hint else " "
+        if s.source == "huggingface":
+            marker = styled("HUB", "accent", bold=True)
+        elif s.curated_hint:
+            marker = styled("TOP", "warning", bold=True)
+        else:
+            marker = styled("CAT", "muted", bold=True)
         click.echo(
-            f"{star}#{s.rank}  {s.display_name} ({s.model_id})  score={s.score:.1f}"
+            f"\n{marker} {styled(f'#{s.rank}', 'heading', bold=True)}  "
+            f"{styled(s.display_name, 'success', bold=True)}"
         )
+        click.echo(f"     {styled('id:', 'muted')} {s.model_id}")
         click.echo(
-            f"     engine={s.engine}  format={s.format}  quant={s.quant}  "
-            f"provider={s.provider}"
+            f"     {styled('engine', 'label')}={s.engine}  "
+            f"{styled('format', 'label')}={s.format}  "
+            f"{styled('quant', 'label')}={s.quant}  "
+            f"{styled('provider', 'label')}={s.provider}  "
+            f"{styled('score', 'label')}={styled(f'{s.score:.1f}', 'accent')}"
         )
-        click.echo(f"     repo={s.repo}")
+        click.echo(f"     {styled('repo:', 'label')} {s.repo}")
+        headroom = styled(f"{s.estimate['headroom_gb']}GB", "success")
         click.echo(
-            f"     context={s.context}  "
-            f"~{s.estimate['total_gb']}GB "
-            f"(headroom {s.estimate['headroom_gb']}GB)"
+            f"     {styled('context:', 'label')} {s.context:,}  "
+            f"{styled('memory:', 'label')} ~{s.estimate['total_gb']}GB "
+            f"(headroom {headroom})"
         )
         _print_engine_args(s.engine_args, indent="     ")
         if s.sampling:
@@ -529,14 +518,24 @@ def suggest(
                 if k != "chat_template_kwargs" and not isinstance(v, dict)
             )
             if samp:
-                click.echo(f"     sampling: {samp}")
-        click.echo(f"     run: rondine serve {s.model_id} --profile {profile}")
-        click.echo()
+                click.echo(f"     {styled('sampling:', 'label')} {samp}")
+        model_arg = s.repo if s.source == "huggingface" else s.model_id
+        command = f"rondine serve {model_arg} --profile {profile}"
+        click.echo(f"     {styled('run:', 'label', bold=True)} {styled(command, 'command')}")
 
+    click.echo()
     for note in result.notes:
-        click.echo(f"note: {note}")
-    click.echo("tip: rondine suggest --configure 1 --save-as coding")
-    click.echo("tip: rondine search \"Qwen3.6 GGUF\"  # discover more on Hub")
+        echo_note(note)
+    click.echo(
+        f"{styled('tip:', 'warning', bold=True)} "
+        f"{styled('rondine suggest --configure 1 --save-as coding', 'command')}"
+    )
+    click.echo(
+        f"{styled('legend:', 'muted')} "
+        f"{styled('TOP', 'warning', bold=True)} target pick · "
+        f"{styled('HUB', 'accent', bold=True)} Hugging Face · "
+        f"{styled('CAT', 'muted', bold=True)} catalog"
+    )
 
     if configure_rank is None:
         return
@@ -559,8 +558,11 @@ def suggest(
         ),
         encoding="utf-8",
     )
-    click.echo(f"configured plan: {path}")
-    click.echo(f"  {match.model_id} via {match.engine}/{match.quant}")
+    echo_success(f"✓ configured plan: {path}")
+    click.echo(
+        f"  {styled(match.model_id, 'success', bold=True)} "
+        f"via {match.engine}/{match.quant}"
+    )
     host = catalog.policy.default_host
     port = catalog.policy.default_port
     _maybe_save_preset(
@@ -572,7 +574,10 @@ def suggest(
         run_name=save_as or "default",
         target_id=result.target_id,
     )
-    click.echo("next: rondine setup && rondine pull && rondine serve")
+    click.echo(
+        f"{styled('next:', 'label', bold=True)} "
+        f"{styled('rondine setup && rondine pull && rondine serve', 'command')}"
+    )
 
 
 @main.command("models")
@@ -583,19 +588,31 @@ def models_cmd(profile: str, opt_in: bool) -> None:
     catalog = load_catalog()
     hw = detect_hardware()
     result = plan_model(catalog, hw, None, profile=profile, include_opt_in=opt_in)
-    click.echo(f"profile={profile} ram={hw.ram_gb}GB  (curated allowlist)")
-    click.echo("tip: rondine suggest  # ranked configs for this machine")
+    echo_heading("Curated models")
+    echo_kv("profile", profile)
+    echo_kv("memory", f"{hw.ram_gb}GB RAM")
+    click.echo(
+        f"{styled('tip:', 'warning', bold=True)} "
+        f"{styled('rondine suggest', 'command')} — ranked configs for this machine"
+    )
     seen: set[str] = set()
     for cand in result.candidates:
         if cand.model_id in seen and cand.rejected:
             continue
-        mark = "FIT" if not cand.rejected else "NO"
+        mark = styled(
+            "FIT" if not cand.rejected else "NO ",
+            "success" if not cand.rejected else "error",
+            bold=True,
+        )
         provider = (cand.variant or {}).get("provider") or ""
         if cand.model_id not in seen:
             seen.add(cand.model_id)
             model = next(m for m in catalog.models if m.id == cand.model_id)
             opt = " [opt-in]" if model.opt_in else ""
-            click.echo(f"{mark:3} {cand.model_id}{opt} — {cand.display_name}")
+            click.echo(
+                f"{mark} {styled(cand.model_id + opt, 'heading', bold=True)} "
+                f"— {cand.display_name}"
+            )
         detail = cand.reject_reason or f"{cand.engine}/{cand.quant} score={cand.score:.1f}"
         click.echo(f"     {provider:18} {cand.engine:10} {cand.quant:16} {detail}")
 
@@ -622,14 +639,23 @@ def search(query: str, engine: str | None, limit: int, as_json: bool) -> None:
     if not hits:
         click.echo("no Hub hits")
         return
-    click.echo(f"Hugging Face search: {query!r}  (curated marked with *)")
+    echo_heading(f"Hugging Face search: {query!r}")
     for hit in hits:
-        star = "*" if hit.curated else " "
-        click.echo(
-            f"{star} {hit.repo_id:55} {hit.engine_hint:10} "
-            f"dl={hit.downloads:<8} score={hit.score:.1f}"
+        marker = (
+            styled("CAT", "warning", bold=True)
+            if hit.curated
+            else styled("HUB", "accent", bold=True)
         )
-    click.echo("next: rondine inspect <org/name>  |  rondine plan <org/name>")
+        click.echo(
+            f"{marker} {styled(f'{hit.repo_id:55}', 'success', bold=hit.curated)} "
+            f"{styled(f'{hit.engine_hint:10}', 'label')} "
+            f"downloads={hit.downloads:<8} score={styled(f'{hit.score:.1f}', 'accent')}"
+        )
+    click.echo(
+        f"{styled('next:', 'label', bold=True)} "
+        f"{styled('rondine inspect <org/name>', 'command')}  |  "
+        f"{styled('rondine plan <org/name>', 'command')}"
+    )
 
 
 @main.command()
@@ -658,16 +684,18 @@ def inspect(repo: str, quant: str | None, as_json: bool) -> None:
             )
         )
         return
-    click.echo(f"repo: {result.repo_id}")
-    click.echo(f"engine/format: {result.engine_hint} / {result.format_hint}")
-    click.echo(f"downloads: {result.downloads}")
-    click.echo(
-        f"recommended: {result.recommended_quant} "
-        f"({result.recommended_file}) ~{result.weight_gb} GB"
+    echo_heading("Hugging Face repository")
+    echo_kv("repo", result.repo_id, value_role="success")
+    echo_kv("engine / format", f"{result.engine_hint} / {result.format_hint}")
+    echo_kv("downloads", f"{result.downloads:,}")
+    echo_kv(
+        "recommended",
+        f"{result.recommended_quant} ({result.recommended_file}) ~{result.weight_gb} GB",
+        value_role="accent",
     )
     for note in result.notes:
-        click.echo(f"note: {note}")
-    click.echo("files:")
+        echo_note(note)
+    echo_heading("Files")
     for f in result.files[:20]:
         flag = " mmproj" if f.is_mmproj else ""
         q = f.quant or "-"
@@ -734,19 +762,21 @@ def plan(
             click.echo(json.dumps({"selected": selected, "source": "huggingface"}, indent=2))
             return
         _echo_logo()
-        click.echo("source: Hugging Face Hub")
-        click.echo(f"selected: {selected['display_name']}")
+        echo_heading("Selected model")
+        echo_kv("source", "Hugging Face Hub", value_role="accent")
+        echo_kv("model", selected["display_name"], value_role="success")
         click.echo(
-            f"  engine: {selected['engine']}  format: {selected['format']}  "
-            f"quant: {selected['quant']}"
+            f"  {styled('engine:', 'label')} {selected['engine']}  "
+            f"{styled('format:', 'label')} {selected['format']}  "
+            f"{styled('quant:', 'label')} {selected['quant']}"
         )
-        click.echo(f"  repo: {selected['repo']}")
-        click.echo(f"  context: {selected['context']}")
+        echo_kv("repo", selected["repo"], indent="  ")
+        echo_kv("context", f"{selected['context']:,}", indent="  ")
         _print_estimate(selected["estimate"])
         _print_engine_args(selected.get("engine_args") or {})
         for reason in selected.get("reasons") or []:
-            click.echo(f"  note: {reason}")
-        click.echo(f"saved plan: {plans_dir() / 'last.json'}")
+            click.echo(f"  {styled('note:', 'warning', bold=True)} {reason}")
+        echo_success(f"✓ saved plan: {plans_dir() / 'last.json'}")
         return
 
     result = plan_model(
@@ -788,9 +818,10 @@ def plan(
         )
         return
     _echo_logo()
-    click.echo("source: curated catalog")
-    click.echo(f"target: {result.target_id or '(generic)'}")
-    click.echo(f"profile: {profile}")
+    echo_heading("Selected model")
+    echo_kv("source", "curated catalog", value_role="accent")
+    echo_kv("target", result.target_id or "(generic)")
+    echo_kv("profile", profile)
     if result.selected is None:
         click.echo("no fitting candidate — try --opt-in, lower --context, or Hub search")
         rejected = [c for c in result.candidates if c.rejected][:8]
@@ -801,25 +832,31 @@ def plan(
         sys.exit(1)
     sel = result.selected
     provider = (sel.variant or {}).get("provider") or ""
-    click.echo(f"selected: {sel.display_name} ({sel.model_id})")
+    echo_kv("model", f"{sel.display_name} ({sel.model_id})", value_role="success")
     click.echo(
-        f"  engine: {sel.engine}  format: {sel.format}  quant: {sel.quant}  "
-        f"provider: {provider}"
+        f"  {styled('engine:', 'label')} {sel.engine}  "
+        f"{styled('format:', 'label')} {sel.format}  "
+        f"{styled('quant:', 'label')} {sel.quant}  "
+        f"{styled('provider:', 'label')} {provider}"
     )
-    click.echo(f"  repo: {sel.repo}")
-    click.echo(f"  context: {sel.context}")
+    echo_kv("repo", sel.repo, indent="  ")
+    echo_kv("context", f"{sel.context:,}", indent="  ")
     click.echo(
-        f"  memory mode: {sel.memory_mode}"
-        + (" (EXPERIMENTAL)" if sel.experimental else "")
+        f"  {styled('memory mode:', 'label')} {sel.memory_mode}"
+        + (
+            f" {styled('(EXPERIMENTAL)', 'warning', bold=True)}"
+            if sel.experimental
+            else ""
+        )
     )
     _print_estimate(asdict(sel.estimate))
     engine_args = (sel.variant or {}).get("engine_args") or {}
     _print_engine_args(engine_args if isinstance(engine_args, dict) else {})
     for reason in sel.reasons:
-        click.echo(f"  note: {reason}")
+        click.echo(f"  {styled('note:', 'warning', bold=True)} {reason}")
     for warning in sel.warnings:
-        click.echo(f"  warning: {warning}", err=True)
-    click.echo(f"saved plan: {path}")
+        echo_warning(warning)
+    echo_success(f"✓ saved plan: {path}")
     payload = asdict(sel)
     payload["engine_args"] = engine_args if isinstance(engine_args, dict) else {}
     _maybe_save_preset(
@@ -952,13 +989,14 @@ def serve(
         for warning in selected.get("warnings") or [
             "experimental oversized launch"
         ]:
-            click.echo(f"warning: {warning}", err=True)
+            echo_warning(str(warning))
     spec = adapter.build_serve({"selected": selected}, host=host, port=port)
-    click.echo(f"engine: {spec.engine}")
-    click.echo(f"command: {spec.command_line()}")
+    echo_heading("Launch configuration")
+    echo_kv("engine", spec.engine, value_role="accent")
+    echo_kv("command", spec.command_line(), value_role="command")
     for note in spec.notes:
-        click.echo(f"note: {note}")
-    click.echo(f"openai base url: {spec.base_url}")
+        echo_note(note)
+    echo_kv("openai base url", spec.base_url, value_role="success")
     _maybe_save_preset(
         save_as,
         selected,
@@ -973,8 +1011,12 @@ def serve(
     with spinner(f"starting {spec.engine} on :{port}", enabled=not foreground):
         record = start_server(spec, name=name, foreground=foreground)
     if not foreground:
-        click.echo(f"started pid={record.pid} log={record.log_path}")
-        click.echo(f"stop with: rondine stop --name {name}")
+        echo_success(f"✓ started pid={record.pid}")
+        echo_kv("log", record.log_path)
+        click.echo(
+            f"{styled('stop with:', 'label', bold=True)} "
+            f"{styled(f'rondine stop --name {name}', 'command')}"
+        )
 
 
 @main.command()

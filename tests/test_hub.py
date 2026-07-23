@@ -6,7 +6,9 @@ from rondine.hub import (
     HubFile,
     HubInspectResult,
     detect_quant,
+    infer_active_params_b,
     infer_engine_and_format,
+    infer_model_family,
 )
 
 
@@ -32,6 +34,20 @@ def test_detect_quant() -> None:
     assert detect_quant("Qwen3.6-35B-A3B-Q4_K_M.gguf") == "Q4_K_M"
     assert detect_quant("model-UD-Q4_K_XL.gguf") == "UD-Q4_K_XL"
     assert detect_quant("weights-4bit") == "4bit"
+
+
+def test_infer_model_family_ignores_name_separators() -> None:
+    families = {"qwen2.5", "qwen3.6", "gemma-4"}
+    assert (
+        infer_model_family("mlx-community/Qwen2_5-Coder-7B-4bit", families)
+        == "qwen2.5"
+    )
+
+
+def test_infer_active_params_prefers_moe_active_size() -> None:
+    assert infer_active_params_b("Qwen3-Coder-480B-A35B-Instruct") == 35.0
+    assert infer_active_params_b("Qwen2.5-Coder-7B-Instruct") == 7.0
+    assert infer_active_params_b("Qwen2.5-Coder-7B-Instruct-4bit") == 7.0
 
 
 def test_hub_inspect_to_plan_selected() -> None:

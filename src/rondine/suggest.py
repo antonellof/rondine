@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, cast
 
-from rondine.catalog import Catalog, get_target, resolve_engine_args
+from rondine.catalog import Catalog, get_target, profile_settings, resolve_engine_args
 from rondine.detect import HardwareInfo
+from rondine.hub import (
+    EngineHint,
+    apply_hub_hardware_budget,
+    curated_repo_ids,
+    infer_model_family,
+    inspect_repo,
+    search_hub,
+)
 from rondine.planner import PlanCandidate, match_target, plan_model
 
 
@@ -29,6 +37,7 @@ class Suggestion:
     reasons: list[str] = field(default_factory=list)
     next_steps: list[str] = field(default_factory=list)
     curated_hint: bool = False
+    source: str = "catalog"
     selected: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -81,6 +90,112 @@ def _next_steps(model_id: str, profile: str, preset_hint: str | None = None) -> 
     return steps
 
 
+def _default_hub_query(profile: str) -> str:
+    return "coder" if profile == "coding" else "instruct"
+
+
+def _hub_suggestions(
+    catalog: Catalog,
+    hw: HardwareInfo,
+    *,
+    profile: str,
+    query: str,
+    preferred_engine: str | None,
+    target_template: str | None,
+    existing_repos: set[str],
+    limit: int,
+) -> list[Suggestion]:
+    engine = (
+        cast(EngineHint, preferred_engine)
+        if preferred_engine in {"llama.cpp", "mlx", "vllm"}
+        else None
+    )
+    hits = search_hub(
+        query,
+        limit=max(limit * 3, 6),
+        engine=engine,
+        curated_repos=curated_repo_ids(catalog.models),
+    )
+    families = {model.family for model in catalog.models}
+    suggestions: list[Suggestion] = []
+
+    for hit in hits:
+        if hit.repo_id in existing_repos or hit.curated:
+            continue
+        try:
+            inspected = inspect_repo(hit.repo_id)
+        except Exception:
+            continue
+        family = infer_model_family(hit.repo_id, families) or ""
+        settings = profile_settings(catalog, profile, family)
+        context = int(settings.get("context", 32768))
+        sampling = {
+            k: v for k, v in settings.items() if k not in {"context", "description"}
+        }
+        selected = inspected.to_plan_selected(
+            profile=profile,
+            context=context,
+            sampling=sampling,
+        )
+        engine_args = resolve_engine_args(
+            catalog,
+            str(selected["engine"]),
+            profile=profile,
+            target_template=target_template,
+        )
+        selected["engine_args"] = engine_args
+        apply_hub_hardware_budget(selected, catalog, hw)
+        estimate = selected["estimate"]
+        if not estimate["fits"] or inspected.weight_gb <= 0:
+            continue
+
+        score = 55.0 + min(hit.score, 60.0)
+        if preferred_engine and selected["engine"] == preferred_engine:
+            score += 15.0
+        score += min(float(estimate["headroom_gb"]), 30.0) * 0.25
+        score -= inspected.weight_gb * 0.05
+        reasons = [
+            f"Hugging Face search match for {query!r}",
+            f"{hit.downloads:,} Hub downloads",
+            *selected.get("reasons", []),
+        ]
+        selected["score"] = round(score, 2)
+        selected["reasons"] = reasons
+        provider = hit.repo_id.split("/")[0] if "/" in hit.repo_id else ""
+        suggestions.append(
+            Suggestion(
+                rank=0,
+                model_id=str(selected["model_id"]),
+                display_name=hit.repo_id,
+                engine=str(selected["engine"]),
+                format=str(selected["format"]),
+                quant=str(selected["quant"]),
+                repo=hit.repo_id,
+                provider=provider,
+                profile=profile,
+                context=context,
+                score=round(score, 2),
+                estimate=dict(estimate),
+                engine_args=dict(selected.get("engine_args") or {}),
+                sampling=sampling,
+                reasons=reasons,
+                next_steps=_next_steps(
+                    hit.repo_id,
+                    profile,
+                    preset_hint=str(selected["model_id"]),
+                ),
+                source="huggingface",
+                selected=selected,
+            )
+        )
+        existing_repos.add(hit.repo_id)
+        if len(suggestions) >= limit:
+            break
+
+    suggestions.sort(key=lambda suggestion: suggestion.score, reverse=True)
+    return suggestions
+
+
 def suggest_for_hardware(
     catalog: Catalog,
     hw: HardwareInfo,
@@ -88,8 +203,10 @@ def suggest_for_hardware(
     profile: str = "coding",
     limit: int = 5,
     include_opt_in: bool = False,
+    include_hub: bool = False,
+    hub_query: str | None = None,
 ) -> SuggestResult:
-    """Rank fitting curated configs for this machine and attach engine knobs."""
+    """Rank fitting catalog and optional Hub configs for this machine."""
     from rondine.planner import engine_order
 
     target_id = match_target(catalog, hw)
@@ -185,6 +302,44 @@ def suggest_for_hardware(
         )
 
     notes: list[str] = []
+    if include_hub and limit > 0:
+        query = hub_query or _default_hub_query(profile)
+        existing_repos = {suggestion.repo for suggestion in suggestions}
+        hub_slots = 1 if limit < 6 else 2
+        try:
+            hub_suggestions = _hub_suggestions(
+                catalog,
+                hw,
+                profile=profile,
+                query=query,
+                preferred_engine=preferred,
+                target_template=template_layer,
+                existing_repos=existing_repos,
+                limit=hub_slots,
+            )
+        except Exception as exc:
+            hub_suggestions = []
+            notes.append(
+                f"Hugging Face search unavailable; showing catalog results ({exc})"
+            )
+        if hub_suggestions:
+            if limit == 1:
+                suggestions = sorted(
+                    [*suggestions, *hub_suggestions],
+                    key=lambda suggestion: suggestion.score,
+                    reverse=True,
+                )[:1]
+            else:
+                suggestions = [
+                    *suggestions[: max(0, limit - len(hub_suggestions))],
+                    *hub_suggestions,
+                ]
+                suggestions.sort(key=lambda suggestion: suggestion.score, reverse=True)
+            for rank, suggestion in enumerate(suggestions, start=1):
+                suggestion.rank = rank
+            notes.append(
+                f"supplemented curated recommendations with Hugging Face search {query!r}"
+            )
     if target and target.notes:
         notes.append(target.notes)
     if missing:
@@ -193,7 +348,7 @@ def suggest_for_hardware(
             + ", ".join(missing)
         )
     if not suggestions:
-        notes.append("no curated model fits; try lower --context, --opt-in, or Hub search")
+        notes.append("no model fits; try lower --context or --opt-in")
 
     return SuggestResult(
         hardware={

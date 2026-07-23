@@ -45,7 +45,9 @@ Your OpenAI-compatible endpoint is `http://127.0.0.1:8080/v1`.
 single-client engine tuning. Use `--profile chat` for a 16K context and
 chat-oriented sampling/concurrency. See the [CLI guide](docs/cli.md#suggest) for
 every `suggest` option, including `--limit`, `--opt-in`, `--json`,
-`--configure`, and `--save-as`.
+`--configure`, and `--save-as`. Suggestions include fitting models discovered
+through the Hugging Face API by default; use `--no-hub` for catalog-only,
+offline results or `--hub-query TEXT` to customize discovery.
 
 ![Rondine doctor and suggest terminal demo](assets/rondine-demo.gif)
 

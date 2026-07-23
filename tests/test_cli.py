@@ -178,7 +178,9 @@ def test_cli_suggest(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-
         ),
     )
     runner = CliRunner()
-    result = runner.invoke(main, ["suggest", "--profile", "coding", "--limit", "3"])
+    result = runner.invoke(
+        main, ["suggest", "--profile", "coding", "--limit", "3", "--no-hub"]
+    )
     assert result.exit_code == 0
     assert "recommended configs" in result.output.lower()
 
@@ -187,8 +189,41 @@ def test_cli_suggest_help_documents_options() -> None:
     result = CliRunner().invoke(main, ["suggest", "--help"])
     assert result.exit_code == 0
     assert "--profile [coding|chat]" in result.output
-    for option in ("--limit", "--opt-in", "--json", "--configure", "--save-as"):
+    for option in (
+        "--limit",
+        "--opt-in",
+        "--hub",
+        "--hub-query",
+        "--json",
+        "--configure",
+        "--save-as",
+    ):
         assert option in result.output
+
+
+def test_cli_suggest_uses_color_on_terminal(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "rondine.cli.detect_hardware",
+        lambda: HardwareInfo(
+            platform="darwin",
+            arch="arm64",
+            hostname="test",
+            ram_gb=32.0,
+            is_apple_silicon=True,
+            metal_available=True,
+        ),
+    )
+
+    result = CliRunner().invoke(
+        main,
+        ["suggest", "--limit", "2", "--no-hub"],
+        color=True,
+    )
+
+    assert result.exit_code == 0
+    assert "\x1b[" in result.output
+    assert "Recommended configs" in result.output
 
 
 def test_cli_suggest_configure(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -196,7 +231,16 @@ def test_cli_suggest_configure(tmp_path, monkeypatch) -> None:  # type: ignore[n
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["suggest", "--configure", "1", "--save-as", "coding", "--limit", "3"],
+        [
+            "suggest",
+            "--configure",
+            "1",
+            "--save-as",
+            "coding",
+            "--limit",
+            "3",
+            "--no-hub",
+        ],
     )
     if result.exit_code != 0:
         return
