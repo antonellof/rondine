@@ -70,14 +70,15 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          NOTES="$(awk '
+          SECTION="${TAG#v}"
+          NOTES="$(awk -v section="${SECTION}" '
             BEGIN { in_section=0 }
             /^##[[:space:]]/ {
-              if ($0 ~ "^##[[:space:]]+" ENVIRON["SECTION"]) { in_section=1; next }
+              if ($0 ~ "^##[[:space:]]+" section "([[:space:]]|$)") { in_section=1; next }
               if (in_section) exit
             }
             in_section { print }
-          ' SECTION="${TAG#v}" CHANGELOG.md)"
+          ' CHANGELOG.md)"
           if [ -z "${NOTES}" ]; then
             NOTES="Rondine ${TAG}"
           fi
