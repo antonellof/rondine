@@ -118,6 +118,7 @@ make it unusably slow; Rondine therefore never selects this mode automatically.
 
 ```bash
 rondine models                         # curated models and fit status
+rondine suggest --interactive          # choose a fitting config with arrow keys
 rondine search "Qwen GGUF"             # search Hugging Face
 rondine inspect org/model-repo         # inspect files, sizes, and quants
 rondine plan org/model-repo --quant Q4_K_M --save-as custom

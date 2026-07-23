@@ -9,6 +9,7 @@ from click.testing import CliRunner
 from rondine.catalog import load_catalog
 from rondine.cli import _apply_hub_hardware_budget, _format_logo, main
 from rondine.detect import HardwareInfo
+from rondine.suggest import suggest_for_hardware
 
 
 def test_format_logo_centers_artwork(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -194,6 +195,7 @@ def test_cli_suggest_help_documents_options() -> None:
         "--opt-in",
         "--hub",
         "--hub-query",
+        "--interactive",
         "--json",
         "--configure",
         "--save-as",
@@ -217,13 +219,56 @@ def test_cli_suggest_uses_color_on_terminal(tmp_path, monkeypatch) -> None:  # t
 
     result = CliRunner().invoke(
         main,
-        ["suggest", "--limit", "2", "--no-hub"],
-        color=True,
+        ["--color", "suggest", "--limit", "2", "--no-hub"],
+        color=False,
     )
 
     assert result.exit_code == 0
     assert "\x1b[" in result.output
     assert "Recommended configs" in result.output
+    assert "metal_fast_synch:" in result.output
+    assert "────────" in result.output
+
+    plain = CliRunner().invoke(
+        main,
+        ["--no-color", "suggest", "--limit", "2", "--no-hub"],
+        color=True,
+    )
+    assert plain.exit_code == 0
+    assert "\x1b[" not in plain.output
+
+
+def test_cli_suggest_interactive_selects_and_configures(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
+    hw = HardwareInfo(
+        platform="darwin",
+        arch="arm64",
+        hostname="test",
+        ram_gb=32.0,
+        is_apple_silicon=True,
+        metal_available=True,
+        disk_free_gb=300.0,
+    )
+    monkeypatch.setattr("rondine.cli.detect_hardware", lambda: hw)
+    expected = suggest_for_hardware(
+        load_catalog(),
+        hw,
+        limit=3,
+        include_hub=False,
+    ).suggestions[1]
+
+    result = CliRunner().invoke(
+        main,
+        ["suggest", "--interactive", "--limit", "3", "--no-hub"],
+        input="2\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Select a configuration" in result.output
+    plan = json.loads((tmp_path / "plans" / "last.json").read_text())
+    assert plan["selected"]["model_id"] == expected.model_id
 
 
 def test_cli_suggest_configure(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from typing import TextIO
 
@@ -18,8 +19,9 @@ COLORS = {
     "warning": "bright_yellow",
     "error": "bright_red",
     "accent": "bright_magenta",
-    "muted": "bright_black",
+    "muted": "white",
     "command": "bright_green",
+    "rule": "bright_blue",
 }
 
 
@@ -56,6 +58,76 @@ def echo_warning(message: str) -> None:
 
 def echo_success(message: str) -> None:
     click.echo(styled(message, "success", bold=True))
+
+
+def echo_rule(width: int = 72) -> None:
+    click.echo(styled("─" * width, "rule"))
+
+
+def select_menu(options: Sequence[str], *, title: str = "Select a configuration") -> int | None:
+    """Select an item with arrow keys, with a numbered prompt fallback."""
+    if not options:
+        return None
+    stdin = click.get_text_stream("stdin")
+    stdout = click.get_text_stream("stdout")
+    interactive_tty = bool(
+        getattr(stdin, "isatty", lambda: False)()
+        and getattr(stdout, "isatty", lambda: False)()
+    )
+    if not interactive_tty:
+        choice = click.prompt(
+            title,
+            type=click.IntRange(1, len(options)),
+            default=1,
+            show_choices=True,
+        )
+        return int(choice) - 1
+
+    import termios
+    import tty
+
+    selected = 0
+    fd = stdin.fileno()
+    previous = termios.tcgetattr(fd)
+    click.echo()
+    echo_heading(title)
+    click.echo(styled("↑/↓ move · enter select · q cancel", "muted"))
+
+    def render(*, move_up: bool = False) -> None:
+        if move_up:
+            stdout.write(f"\x1b[{len(options)}A")
+        for index, option in enumerate(options):
+            stdout.write("\r\x1b[2K")
+            if index == selected:
+                stdout.write(
+                    f"{styled('❯', 'heading', bold=True)} "
+                    f"{styled(option, 'success', bold=True)}\n"
+                )
+            else:
+                stdout.write(f"  {option}\n")
+        stdout.flush()
+
+    render()
+    try:
+        tty.setraw(fd)
+        while True:
+            key = os.read(fd, 3)
+            if key in {b"\r", b"\n"}:
+                break
+            if key in {b"q", b"Q", b"\x1b"}:
+                return None
+            if key in {b"\x1b[A", b"k", b"K"}:
+                selected = (selected - 1) % len(options)
+                render(move_up=True)
+            elif key in {b"\x1b[B", b"j", b"J"}:
+                selected = (selected + 1) % len(options)
+                render(move_up=True)
+            elif key == b"\x03":
+                raise click.Abort()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, previous)
+    click.echo(styled(f"✓ selected {options[selected]}", "success", bold=True))
+    return selected
 
 
 @contextmanager

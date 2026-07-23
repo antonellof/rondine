@@ -3,6 +3,18 @@
 Run `rondine COMMAND --help` for the option list installed with your version.
 This guide explains the choices that affect model recommendations.
 
+Rondine enables colors automatically for interactive terminals. If terminal
+detection is incorrect, force the mode before the command:
+
+```bash
+rondine --color doctor
+rondine --color suggest
+# Persist for the current shell:
+export RONDINE_COLOR=1
+```
+
+Use `--no-color` or `RONDINE_COLOR=0` for plain output.
+
 ## Suggest
 
 `rondine suggest` detects the current machine, ranks curated configurations, and
@@ -15,6 +27,7 @@ rondine suggest --profile coding
 
 Each result includes its rank, estimated memory use and headroom, context size,
 engine arguments, sampling settings, and an equivalent `serve` command.
+Interactive terminals display each configuration as a separated card.
 
 ### Profiles
 
@@ -86,6 +99,19 @@ engine order, suggestions, estimates, arguments, and notes.
 ```bash
 rondine suggest --profile coding --json > suggestions.json
 ```
+
+`-i` / `--interactive`
+
+Show an arrow-key menu after the recommendations. Use `↑`/`↓` (or `j`/`k`) to
+move, Enter to select and configure a model, or `q` to cancel. When input is
+not attached to a terminal, Rondine falls back to a numbered prompt.
+
+```bash
+rondine suggest --interactive
+rondine suggest -i --save-as coding
+```
+
+Interactive mode cannot be combined with `--json` or `--configure`.
 
 `--configure INTEGER`
 

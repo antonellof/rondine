@@ -42,8 +42,10 @@ from rondine.ux import (
     echo_heading,
     echo_kv,
     echo_note,
+    echo_rule,
     echo_success,
     echo_warning,
+    select_menu,
     spinner,
     styled,
 )
@@ -90,7 +92,17 @@ def _print_engine_args(args: dict[str, Any], indent: str = "  ") -> None:
         return
     click.echo(f"{indent}{styled('engine config:', 'label', bold=True)}")
     for key, value in sorted(args.items()):
-        click.echo(f"{indent}  {styled(key + ':', 'muted')} {value}")
+        if isinstance(value, bool):
+            rendered = styled(
+                value,
+                "success" if value else "warning",
+                bold=True,
+            )
+        else:
+            rendered = styled(value, "accent")
+        click.echo(
+            f"{indent}  {styled(key + ':', 'label', bold=True)} {rendered}"
+        )
 
 
 def _print_hybrid_unavailable_guidance(hw: Any) -> None:
@@ -312,10 +324,16 @@ def _maybe_save_preset(
         click.echo(f"restart later: rondine preset serve {save_as}")
 
 
-@click.group()
+@click.group(context_settings={"auto_envvar_prefix": "RONDINE"})
 @click.version_option(__version__, prog_name="rondine")
-def main() -> None:
+@click.option(
+    "--color/--no-color",
+    default=None,
+    help="Force colored output on or off (env: RONDINE_COLOR).",
+)
+def main(color: bool | None) -> None:
     """Hardware-aware local LLM launcher for Mac, NVIDIA GPUs, and DGX Spark."""
+    click.get_current_context().color = color
 
 
 @main.command()
@@ -407,6 +425,12 @@ def doctor() -> None:
     help="Print the complete suggestion result as JSON for scripts.",
 )
 @click.option(
+    "-i",
+    "--interactive",
+    is_flag=True,
+    help="Select and configure a suggestion with an interactive menu.",
+)
+@click.option(
     "--configure",
     "configure_rank",
     type=int,
@@ -426,10 +450,17 @@ def suggest(
     hub: bool,
     hub_query: str | None,
     as_json: bool,
+    interactive: bool,
     configure_rank: int | None,
     save_as: str | None,
 ) -> None:
     """Suggest models that fit this machine and show launch configs."""
+    if interactive and as_json:
+        raise click.ClickException("--interactive cannot be combined with --json")
+    if interactive and configure_rank is not None:
+        raise click.ClickException(
+            "--interactive cannot be combined with --configure"
+        )
     catalog = load_catalog()
     with spinner("matching models to hardware"):
         hw = detect_hardware()
@@ -485,6 +516,7 @@ def suggest(
 
     echo_heading("Recommended configs")
     for s in result.suggestions:
+        echo_rule()
         if s.source == "huggingface":
             marker = styled("HUB", "accent", bold=True)
         elif s.curated_hint:
@@ -492,7 +524,7 @@ def suggest(
         else:
             marker = styled("CAT", "muted", bold=True)
         click.echo(
-            f"\n{marker} {styled(f'#{s.rank}', 'heading', bold=True)}  "
+            f"{marker} {styled(f'#{s.rank}', 'heading', bold=True)}  "
             f"{styled(s.display_name, 'success', bold=True)}"
         )
         click.echo(f"     {styled('id:', 'muted')} {s.model_id}")
@@ -523,6 +555,7 @@ def suggest(
         command = f"rondine serve {model_arg} --profile {profile}"
         click.echo(f"     {styled('run:', 'label', bold=True)} {styled(command, 'command')}")
 
+    echo_rule()
     click.echo()
     for note in result.notes:
         echo_note(note)
@@ -536,6 +569,18 @@ def suggest(
         f"{styled('HUB', 'accent', bold=True)} Hugging Face · "
         f"{styled('CAT', 'muted', bold=True)} catalog"
     )
+
+    if interactive:
+        labels = [
+            f"#{s.rank} {s.display_name} — {s.engine}/{s.quant}, "
+            f"~{s.estimate['total_gb']}GB"
+            for s in result.suggestions
+        ]
+        selected_index = select_menu(labels)
+        if selected_index is None:
+            echo_note("selection cancelled; no plan was changed")
+            return
+        configure_rank = result.suggestions[selected_index].rank
 
     if configure_rank is None:
         return
