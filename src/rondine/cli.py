@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -156,6 +157,67 @@ def _adapter_for(engine: str) -> EngineAdapter:
     if engine not in ADAPTERS:
         raise click.ClickException(f"unsupported engine: {engine}")
     return ADAPTERS[engine]
+
+
+def _compatible_engines(hw: Any) -> list[str]:
+    """Return engines that can run on this hardware, in recommended setup order."""
+    compatible = ["llama.cpp"] if hw.platform in {"darwin", "linux"} else []
+    if hw.is_apple_silicon:
+        compatible.append("mlx")
+    if hw.platform == "linux" and hw.cuda_available:
+        compatible.append("vllm")
+    return compatible
+
+
+def _engine_status(hw: Any, engine: str) -> Any | None:
+    return next((status for status in hw.engines if status.name == engine), None)
+
+
+def _engine_install_guidance(hw: Any, engine: str | None = None) -> list[str]:
+    compatible = _compatible_engines(hw)
+    chosen = [engine] if engine else compatible
+    lines = [
+        f"Install automatically: rondine setup --engine {name}"
+        for name in chosen
+        if name in compatible
+    ]
+    if hw.platform == "darwin":
+        if "llama.cpp" in chosen:
+            lines.append("macOS alternative: brew install llama.cpp")
+        if not hw.is_apple_silicon:
+            lines.append("MLX is unavailable: it requires Apple Silicon.")
+    elif hw.platform == "linux":
+        if "llama.cpp" in chosen:
+            lines.append(
+                "Linux llama.cpp setup requires git, cmake, and a C++ compiler."
+            )
+        if not hw.cuda_available:
+            lines.append("vLLM is unavailable: no NVIDIA CUDA device was detected.")
+        elif "vllm" in chosen:
+            lines.append(
+                "vLLM uses Docker when available; otherwise setup creates a managed uv environment."
+            )
+    else:
+        lines.append("Native Windows engines are unsupported; run Rondine inside WSL2.")
+    return lines
+
+
+def _require_engine_ready(hw: Any, engine: str) -> None:
+    status = _engine_status(hw, engine)
+    if status is not None and status.available:
+        return
+    detail = status.detail if status is not None else "not detected"
+    guidance = _engine_install_guidance(hw, engine)
+    if engine not in _compatible_engines(hw):
+        guidance.insert(
+            0,
+            f"{engine} is not compatible with detected hardware "
+            f"({hw.platform}/{hw.arch}).",
+        )
+    message = f"engine '{engine}' is not ready: {detail}"
+    if guidance:
+        message += "\n" + "\n".join(guidance)
+    raise click.ClickException(message)
 
 
 def _is_hf_repo(value: str) -> bool:
@@ -396,11 +458,29 @@ def doctor() -> None:
     echo_kv("matched target", target or "(none)", value_role="accent")
     for w in hw.warnings:
         echo_warning(w)
+    compatible = _compatible_engines(hw)
+    ready = [
+        name
+        for name in compatible
+        if (engine_status := _engine_status(hw, name)) is not None
+        and engine_status.available
+    ]
     click.echo()
-    click.echo(
-        f"{styled('next:', 'label', bold=True)} "
-        f"{styled('rondine suggest --profile coding', 'command')}"
-    )
+    if ready:
+        click.echo(
+            f"{styled('next:', 'label', bold=True)} "
+            f"{styled('rondine suggest --profile coding', 'command')}"
+        )
+    else:
+        echo_warning("no runnable inference engine detected")
+        echo_heading("Install an engine")
+        for line in _engine_install_guidance(hw):
+            click.echo(f"  {line}")
+        click.echo()
+        click.echo(
+            f"{styled('recommended:', 'label', bold=True)} "
+            f"{styled('rondine setup', 'command')}"
+        )
 
 
 @main.command()
@@ -988,20 +1068,48 @@ def plan(
 def setup(engines: tuple[str, ...], dry_run: bool) -> None:
     """Install pinned engine toolchains for this machine."""
     hw = detect_hardware()
+    compatible = _compatible_engines(hw)
+    if not compatible:
+        raise click.ClickException("\n".join(_engine_install_guidance(hw)))
     if not engines:
-        chosen: list[str] = ["llama.cpp"]
-        if hw.is_apple_silicon:
-            chosen.append("mlx")
-        if hw.is_spark or (hw.platform == "linux" and hw.cuda_available):
-            chosen.append("vllm")
-        engines = tuple(chosen)
+        engines = tuple(compatible)
     for name in engines:
+        if name not in compatible:
+            detail = _engine_status(hw, name)
+            reason = detail.detail if detail is not None else "unsupported on this host"
+            raise click.ClickException(
+                f"cannot set up {name}: {reason}\n"
+                + "\n".join(_engine_install_guidance(hw, name))
+            )
         click.echo(f"== setup {name} ==")
         adapter = _adapter_for(name)
-        with spinner(f"setting up {name}", enabled=not dry_run):
-            lines = adapter.setup(dry_run=dry_run)
+        try:
+            with spinner(f"setting up {name}", enabled=not dry_run):
+                lines = adapter.setup(dry_run=dry_run)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            raise click.ClickException(
+                f"failed to set up {name}: {exc}\n"
+                + "\n".join(_engine_install_guidance(hw, name))
+            ) from exc
         for line in lines:
             click.echo(line)
+    if not dry_run:
+        refreshed = detect_hardware()
+        missing = [
+            name
+            for name in engines
+            if not (
+                (status := _engine_status(refreshed, name)) is not None
+                and status.available
+            )
+        ]
+        if missing:
+            raise click.ClickException(
+                "setup completed, but these engines are still unavailable: "
+                + ", ".join(missing)
+                + "\nRun `rondine doctor` for details."
+            )
+        echo_success("✓ engine setup complete")
 
 
 @main.command()
@@ -1097,6 +1205,8 @@ def serve(
     host = host or catalog.policy.default_host
     port = port or catalog.policy.default_port
     adapter = _adapter_for(str(selected["engine"]))
+    if not dry_run:
+        _require_engine_ready(detect_hardware(), str(selected["engine"]))
     if selected.get("experimental"):
         for warning in selected.get("warnings") or [
             "experimental oversized launch"

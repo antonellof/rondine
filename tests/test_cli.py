@@ -8,7 +8,7 @@ from click.testing import CliRunner
 
 from rondine.catalog import load_catalog
 from rondine.cli import _apply_hub_hardware_budget, _format_logo, main
-from rondine.detect import HardwareInfo
+from rondine.detect import EngineStatus, HardwareInfo
 from rondine.presets import preset_from_selected, save_preset
 from rondine.suggest import suggest_for_hardware
 
@@ -148,6 +148,34 @@ def test_cli_doctor() -> None:
     result = runner.invoke(main, ["doctor"])
     assert result.exit_code == 0
     assert "ram:" in result.output.lower() or "RAM" in result.output or "ram:" in result.output
+
+
+def test_cli_doctor_suggests_platform_setup_when_no_engine(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(
+        "rondine.cli.detect_hardware",
+        lambda: HardwareInfo(
+            platform="linux",
+            arch="x86_64",
+            hostname="test",
+            ram_gb=16.0,
+            engines=[
+                EngineStatus("llama.cpp", False, detail="not found"),
+                EngineStatus("mlx", False, detail="Apple Silicon only"),
+                EngineStatus("vllm", False, detail="NVIDIA CUDA required"),
+            ],
+        ),
+    )
+
+    result = CliRunner().invoke(main, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "no runnable inference engine detected" in result.output
+    assert "rondine setup --engine llama.cpp" in result.output
+    assert "git, cmake, and a C++ compiler" in result.output
+    assert "no NVIDIA CUDA device" in result.output
+    assert "recommended: rondine setup" in result.output
 
 
 def test_cli_models() -> None:
@@ -521,3 +549,47 @@ def test_cli_serve_dry_run(tmp_path, monkeypatch) -> None:  # type: ignore[no-un
     assert result.exit_code == 0
     assert "command:" in result.output
     assert "openai base url:" in result.output
+
+
+def test_cli_serve_checks_engine_before_starting(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("RONDINE_HOME", str(tmp_path))
+    plans = tmp_path / "plans"
+    plans.mkdir()
+    (plans / "last.json").write_text(
+        json.dumps(
+            {
+                "profile": "coding",
+                "selected": {
+                    "model_id": "test-model",
+                    "display_name": "Test model",
+                    "engine": "llama.cpp",
+                    "format": "gguf",
+                    "quant": "Q4_K_M",
+                    "context": 4096,
+                    "repo": "example/test-model",
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(
+        "rondine.cli.detect_hardware",
+        lambda: HardwareInfo(
+            platform="linux",
+            arch="x86_64",
+            hostname="test",
+            ram_gb=16.0,
+            engines=[
+                EngineStatus("llama.cpp", False, detail="not found"),
+                EngineStatus("mlx", False, detail="Apple Silicon only"),
+                EngineStatus("vllm", False, detail="NVIDIA CUDA required"),
+            ],
+        ),
+    )
+
+    result = CliRunner().invoke(main, ["serve"])
+
+    assert result.exit_code != 0
+    assert "engine 'llama.cpp' is not ready: not found" in result.output
+    assert "rondine setup --engine llama.cpp" in result.output

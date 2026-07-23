@@ -36,7 +36,17 @@ wsl --install
 - Python 3.11+ (uv downloads a managed interpreter when needed)
 
 Inference engines (llama.cpp, MLX-LM, vLLM) are installed later with
-`rondine setup`, not by the CLI installer.
+`rondine setup`, not by the CLI installer. With no `--engine` option, setup
+automatically chooses engines supported by the detected platform:
+
+- Linux/WSL without CUDA: llama.cpp
+- Linux/WSL with NVIDIA CUDA: llama.cpp and vLLM
+- Apple Silicon: llama.cpp and MLX-LM
+- Intel macOS: llama.cpp
+
+On Linux, building llama.cpp requires `git`, `cmake`, and a C++ compiler.
+Rondine reports a platform-specific install command if no runnable engine is
+found, and `rondine serve` refuses to launch until its selected engine is ready.
 
 ## Pin a version
 
@@ -146,6 +156,7 @@ uv tool install --force --python 3.11 ./rondine-0.1.0-py3-none-any.whl
 
 ```bash
 rondine doctor
+rondine setup
 rondine suggest --profile coding
 rondine
 ```

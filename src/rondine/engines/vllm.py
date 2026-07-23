@@ -8,7 +8,7 @@ import subprocess
 from typing import Any
 
 from rondine.engines.base import EngineAdapter, LaunchSpec, append_flag, selected_engine_args
-from rondine.paths import which
+from rondine.paths import engines_dir, which
 
 # Pinned NGC tag used by NVIDIA Spark playbooks (override with RONDINE_VLLM_IMAGE).
 DEFAULT_VLLM_IMAGE = os.environ.get("RONDINE_VLLM_IMAGE", "nvcr.io/nvidia/vllm:26.04-py3")
@@ -16,6 +16,10 @@ DEFAULT_VLLM_IMAGE = os.environ.get("RONDINE_VLLM_IMAGE", "nvcr.io/nvidia/vllm:2
 
 class VllmAdapter(EngineAdapter):
     name = "vllm"
+
+    def _managed_bin(self) -> str | None:
+        candidate = engines_dir() / "vllm-venv" / "bin" / "vllm"
+        return str(candidate) if candidate.is_file() else None
 
     def setup(self, *, dry_run: bool = False) -> list[str]:
         cmds: list[str] = []
@@ -26,12 +30,12 @@ class VllmAdapter(EngineAdapter):
             pull = ["docker", "pull", DEFAULT_VLLM_IMAGE]
             cmds.append(" ".join(pull))
             if not dry_run:
-                subprocess.run(pull, check=False)
+                subprocess.run(pull, check=True)
             return cmds
         # Local uv install fallback (non-container)
         uv = which("uv")
         if uv:
-            venv_path = os.path.expanduser("~/.rondine/engines/vllm-venv")
+            venv_path = str(engines_dir() / "vllm-venv")
             create = [uv, "venv", venv_path, "--python", "3.13"]
             install = [
                 uv,
@@ -47,8 +51,8 @@ class VllmAdapter(EngineAdapter):
             cmds.append(" ".join(create))
             cmds.append(" ".join(install))
             if not dry_run:
-                subprocess.run(create, check=False)
-                subprocess.run(install, check=False)
+                subprocess.run(create, check=True)
+                subprocess.run(install, check=True)
             return cmds
         cmds.append("# neither docker nor uv found; install docker or uv for vLLM")
         return cmds
@@ -77,7 +81,15 @@ class VllmAdapter(EngineAdapter):
         args = selected_engine_args(plan)
         context = int(selected.get("context") or args.get("max_model_len") or 32768)
 
-        inner = ["vllm", "serve", repo, "--host", host, "--port", str(port)]
+        inner = [
+            self._managed_bin() or which("vllm") or "vllm",
+            "serve",
+            repo,
+            "--host",
+            host,
+            "--port",
+            str(port),
+        ]
         append_flag(inner, "--max-model-len", int(args.get("max_model_len") or context))
         if "gpu_memory_utilization" in args:
             append_flag(

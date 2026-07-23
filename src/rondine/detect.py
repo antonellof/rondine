@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 
-from rondine.paths import which
+from rondine.paths import engines_dir, which
 
 
 @dataclass
@@ -194,10 +194,18 @@ def _looks_like_spark(gpu_name: str, arch: str, ram_gb: float) -> bool:
 
 
 def _engine_llama() -> EngineStatus:
-    path = which("llama-server") or which("llama-cli")
+    path = which("llama-server")
+    if not path:
+        managed = engines_dir() / "llama.cpp" / "build" / "bin"
+        managed_server = managed / "llama-server"
+        path = str(managed_server) if managed_server.is_file() else None
     if not path:
         brew = which("brew")
-        detail = "not found (rondine setup"
+        detail = (
+            "llama-cli found but llama-server missing (rondine setup"
+            if which("llama-cli")
+            else "not found (rondine setup"
+        )
         if brew:
             detail += " or brew install llama.cpp"
         detail += ")"
@@ -216,6 +224,23 @@ def _engine_mlx() -> EngineStatus:
     path = which("mlx_lm.server")
     if path:
         return EngineStatus("mlx", True, path=path, detail="mlx_lm.server on PATH")
+    managed_python = engines_dir() / "mlx-venv" / "bin" / "python"
+    if managed_python.is_file():
+        out = _run(
+            [
+                str(managed_python),
+                "-c",
+                "import mlx_lm; print(getattr(mlx_lm, '__version__', 'ok'))",
+            ]
+        )
+        if out.strip() and "Error" not in out and "Traceback" not in out:
+            return EngineStatus(
+                "mlx",
+                True,
+                path=str(managed_python),
+                version=out.strip(),
+                detail="Rondine managed environment",
+            )
     # Check for python module via uv/python
     py = which("python3") or which("python")
     if py:
@@ -225,9 +250,21 @@ def _engine_mlx() -> EngineStatus:
     return EngineStatus("mlx", False, detail="not installed (rondine setup)")
 
 
-def _engine_vllm() -> EngineStatus:
+def _engine_vllm(*, platform_name: str, cuda_available: bool) -> EngineStatus:
+    if platform_name != "linux":
+        return EngineStatus("vllm", False, detail="Linux with NVIDIA CUDA only")
+    if not cuda_available:
+        detail = "NVIDIA CUDA required"
+        if which("docker"):
+            detail += " (docker available)"
+        return EngineStatus("vllm", False, detail=detail)
     if which("docker"):
-        detail = "docker available"
+        return EngineStatus(
+            "vllm",
+            True,
+            path=which("docker"),
+            detail="Docker runtime (image installed by rondine setup)",
+        )
     else:
         detail = "docker not found"
     path = which("vllm")
@@ -235,11 +272,17 @@ def _engine_vllm() -> EngineStatus:
         ver = _run([path, "--version"])
         version = ver.strip().splitlines()[0] if ver.strip() else None
         return EngineStatus("vllm", True, path=path, version=version, detail=detail)
-    py = which("python3") or which("python")
-    if py:
-        out = _run([py, "-c", "import vllm; print(vllm.__version__)"])
-        if out.strip() and "Error" not in out and "Traceback" not in out:
-            return EngineStatus("vllm", True, path=py, version=out.strip(), detail=detail)
+    managed = engines_dir() / "vllm-venv" / "bin" / "vllm"
+    if managed.is_file():
+        ver = _run([str(managed), "--version"])
+        version = ver.strip().splitlines()[0] if ver.strip() else None
+        return EngineStatus(
+            "vllm",
+            True,
+            path=str(managed),
+            version=version,
+            detail="Rondine managed environment",
+        )
     return EngineStatus("vllm", False, detail=detail)
 
 
@@ -288,7 +331,11 @@ def detect_hardware() -> HardwareInfo:
         metal_available=apple,
         disk_free_gb=round(disk_free, 1),
         disk_total_gb=round(disk_total, 1),
-        engines=[_engine_llama(), _engine_mlx(), _engine_vllm()],
+        engines=[
+            _engine_llama(),
+            _engine_mlx(),
+            _engine_vllm(platform_name=plat, cuda_available=cuda.available),
+        ],
     )
     if apple and not shutil.which("llama-server"):
         info.warnings.append(

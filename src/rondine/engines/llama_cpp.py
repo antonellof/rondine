@@ -27,7 +27,7 @@ class LlamaCppAdapter(EngineAdapter):
             cmd = ["brew", "install", "llama.cpp"]
             cmds.append(" ".join(cmd))
             if not dry_run:
-                subprocess.run(cmd, check=False)
+                subprocess.run(cmd, check=True)
             return cmds
         dest = engines_dir() / "llama.cpp"
         clone = [
